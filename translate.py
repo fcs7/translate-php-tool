@@ -347,6 +347,208 @@ def process_file(src_path, dst_path, dst_dir, delay):
 
 
 # =============================================================================
+# Validação e Verificação
+# =============================================================================
+
+def validate_translation(src_dir, dst_dir):
+    """
+    Valida a qualidade da tradução comparando EN vs BR.
+    Retorna dict com estatísticas e lista de problemas.
+    """
+    stats = {
+        'success': 0,
+        'untranslated': 0,
+        'missing_placeholders': 0,
+        'escape_issues': 0,
+        'line_mismatch': 0,
+        'missing_files': 0,
+    }
+    issues = []
+
+    print("\n" + "="*60)
+    print("🔍 VALIDANDO TRADUÇÃO...")
+    print("="*60 + "\n")
+
+    # Coletar todos arquivos .php do src
+    src_files = []
+    for dirpath, dirnames, filenames in os.walk(src_dir):
+        for filename in filenames:
+            if filename.endswith('.php'):
+                src_path = os.path.join(dirpath, filename)
+                rel_path = os.path.relpath(src_path, src_dir)
+                src_files.append(rel_path)
+
+    for rel_path in sorted(src_files):
+        src_path = os.path.join(src_dir, rel_path)
+        dst_path = os.path.join(dst_dir, rel_path)
+
+        # Checar se arquivo traduzido existe
+        if not os.path.exists(dst_path):
+            stats['missing_files'] += 1
+            issues.append({
+                'type': 'missing_file',
+                'file': rel_path,
+                'msg': 'Arquivo não foi traduzido'
+            })
+            continue
+
+        # Ler ambos arquivos
+        try:
+            with open(src_path, 'r', encoding='utf-8') as f:
+                src_lines = f.readlines()
+            with open(dst_path, 'r', encoding='utf-8') as f:
+                dst_lines = f.readlines()
+        except Exception as e:
+            issues.append({
+                'type': 'read_error',
+                'file': rel_path,
+                'msg': f'Erro ao ler: {e}'
+            })
+            continue
+
+        # Verificar contagem de linhas
+        if len(src_lines) != len(dst_lines):
+            stats['line_mismatch'] += 1
+            issues.append({
+                'type': 'line_count',
+                'file': rel_path,
+                'msg': f'Linhas diferentes: EN={len(src_lines)} BR={len(dst_lines)}'
+            })
+
+        # Comparar linha por linha
+        for i, (src_line, dst_line) in enumerate(zip(src_lines, dst_lines), 1):
+            src_m = SINGLE_QUOTE_RE.match(src_line.rstrip('\n')) or \
+                    DOUBLE_QUOTE_RE.match(src_line.rstrip('\n'))
+            dst_m = SINGLE_QUOTE_RE.match(dst_line.rstrip('\n')) or \
+                    DOUBLE_QUOTE_RE.match(dst_line.rstrip('\n'))
+
+            if not src_m or not dst_m:
+                continue  # Linha não é $msg_arr
+
+            src_key = src_m.group(1)  # prefix com chave
+            src_val = src_m.group(2)
+            dst_key = dst_m.group(1)
+            dst_val = dst_m.group(2)
+
+            # Checar se chave foi mantida
+            if src_key != dst_key:
+                issues.append({
+                    'type': 'key_changed',
+                    'file': rel_path,
+                    'line': i,
+                    'msg': f'Chave alterada: {src_key[:30]} != {dst_key[:30]}'
+                })
+                continue
+
+            # Extrair placeholders de ambos
+            src_placeholders = set(PLACEHOLDER_RE.findall(src_val))
+            dst_placeholders = set(PLACEHOLDER_RE.findall(dst_val))
+
+            # Checar se string foi traduzida (heurística: não pode ser idêntica se tiver texto)
+            if src_val == dst_val and len(src_val) > 10 and '{' not in src_val:
+                stats['untranslated'] += 1
+                issues.append({
+                    'type': 'untranslated',
+                    'file': rel_path,
+                    'line': i,
+                    'en': src_val[:50],
+                    'br': dst_val[:50]
+                })
+                continue
+
+            # Checar se placeholders foram preservados
+            if src_placeholders != dst_placeholders:
+                stats['missing_placeholders'] += 1
+                missing = src_placeholders - dst_placeholders
+                extra = dst_placeholders - src_placeholders
+                issues.append({
+                    'type': 'placeholder',
+                    'file': rel_path,
+                    'line': i,
+                    'missing': list(missing),
+                    'extra': list(extra),
+                    'en': src_val[:50],
+                    'br': dst_val[:50]
+                })
+                continue
+
+            # Checar escapes básicos (contar \' e \")
+            src_escapes = src_val.count("\\'") + src_val.count('\\"')
+            dst_escapes = dst_val.count("\\'") + dst_val.count('\\"')
+
+            # Se EN tinha escapes e BR não tem nenhum, pode ser problema
+            if src_escapes > 0 and dst_escapes == 0 and len(dst_val) > 5:
+                stats['escape_issues'] += 1
+                issues.append({
+                    'type': 'escape',
+                    'file': rel_path,
+                    'line': i,
+                    'msg': f'Possível perda de escape: EN tinha {src_escapes}, BR tem {dst_escapes}',
+                    'en': src_val[:50],
+                    'br': dst_val[:50]
+                })
+                continue
+
+            stats['success'] += 1
+
+    # Relatório final
+    print(f"📊 ESTATÍSTICAS:\n")
+    print(f"  ✅ Traduções OK:          {stats['success']}")
+    print(f"  ❌ Não traduzidas:        {stats['untranslated']}")
+    print(f"  ⚠️  Placeholders perdidos: {stats['missing_placeholders']}")
+    print(f"  ⚠️  Problemas de escape:   {stats['escape_issues']}")
+    print(f"  ❌ Arquivos faltando:     {stats['missing_files']}")
+    print(f"  ❌ Linhas diferentes:     {stats['line_mismatch']}")
+
+    total_issues = stats['untranslated'] + stats['missing_placeholders'] + \
+                   stats['escape_issues'] + stats['missing_files'] + stats['line_mismatch']
+
+    if total_issues == 0:
+        print(f"\n🎉 PERFEITO! Nenhum problema encontrado.")
+    else:
+        print(f"\n⚠️  Total de problemas: {total_issues}")
+        print(f"\n❗ PRIMEIROS 20 PROBLEMAS:\n")
+
+        for issue in issues[:20]:
+            if issue['type'] == 'untranslated':
+                print(f"  ❌ {issue['file']}:{issue['line']}")
+                print(f"     String não foi traduzida:")
+                print(f"     EN: {issue['en']}")
+                print()
+            elif issue['type'] == 'placeholder':
+                print(f"  ⚠️  {issue['file']}:{issue['line']}")
+                print(f"     Placeholders diferentes:")
+                if issue['missing']:
+                    print(f"     Faltando: {', '.join(issue['missing'])}")
+                if issue['extra']:
+                    print(f"     Extras: {', '.join(issue['extra'])}")
+                print(f"     EN: {issue['en']}")
+                print(f"     BR: {issue['br']}")
+                print()
+            elif issue['type'] == 'escape':
+                print(f"  ⚠️  {issue['file']}:{issue['line']}")
+                print(f"     {issue['msg']}")
+                print(f"     EN: {issue['en']}")
+                print(f"     BR: {issue['br']}")
+                print()
+            elif issue['type'] == 'missing_file':
+                print(f"  ❌ {issue['file']}")
+                print(f"     {issue['msg']}")
+                print()
+            elif issue['type'] == 'line_count':
+                print(f"  ❌ {issue['file']}")
+                print(f"     {issue['msg']}")
+                print()
+
+        if len(issues) > 20:
+            print(f"  ... e mais {len(issues) - 20} problemas.")
+
+    print("\n" + "="*60 + "\n")
+
+    return stats, issues
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -397,6 +599,14 @@ Exemplos:
         help='Profundidade máxima para busca recursiva (padrão: 5)'
     )
 
+    # Grupo 3: Modo validação
+    validate_group = parser.add_argument_group('modo validação')
+    validate_group.add_argument(
+        '--validate',
+        action='store_true',
+        help='Apenas valida tradução existente (compara EN vs BR), não traduz'
+    )
+
     # Opções gerais
     parser.add_argument(
         '--delay',
@@ -410,6 +620,25 @@ Exemplos:
 
 def main():
     args = parse_args()
+
+    # Modo validação: só valida e sai
+    if args.validate:
+        if not args.dir_in or not args.dir_out:
+            print("❌ ERRO: --validate requer --dir-in e --dir-out")
+            sys.exit(1)
+
+        src_dir = os.path.abspath(os.path.expanduser(args.dir_in))
+        dst_dir = os.path.abspath(os.path.expanduser(args.dir_out))
+
+        if not os.path.isdir(src_dir):
+            print(f"❌ ERRO: Diretório EN não encontrado: {src_dir}")
+            sys.exit(1)
+        if not os.path.isdir(dst_dir):
+            print(f"❌ ERRO: Diretório BR não encontrado: {dst_dir}")
+            sys.exit(1)
+
+        stats, issues = validate_translation(src_dir, dst_dir)
+        sys.exit(0)
 
     # Validar argumentos
     if args.find:
@@ -515,6 +744,13 @@ def main():
             print()
 
     print(f"✅ Completo. {file_count} arquivos processados.")
+
+    # Validar automaticamente após tradução
+    print("\n" + "="*60)
+    print("🔍 Iniciando validação automática...")
+    print("="*60)
+
+    stats, issues = validate_translation(src_dir, dst_dir)
 
 
 if __name__ == '__main__':
