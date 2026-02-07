@@ -4,23 +4,26 @@ Ferramenta automática para traduzir arquivos de localização PHP do inglês pa
 
 ## 📋 Características
 
+- ✅ **Auto-detecção** de diretórios de localização em projetos
+- ✅ **3 modos de operação**: manual, interativo e automático
 - ✅ Traduz apenas os **valores** das strings (lado direito do `=`)
 - ✅ Preserva **chaves**, **estrutura** e **formatação** do código
 - ✅ Protege **placeholders** como `{variable_name}` (não são traduzidos)
 - ✅ Mantém **HTML** e **escapes** PHP (`\'`, `\"`, `\n`) intactos
 - ✅ **Resume automático**: se interrompido, continua de onde parou
 - ✅ **Auto-instalação** do translate-shell de acordo com o sistema
-- ✅ Suporta qualquer diretório via parâmetros CLI
+- ✅ Detecta idioma automaticamente pelo nome do diretório
 
 ## 🚀 Instalação
 
 ```bash
-# Clone ou baixe o script
-wget https://github.com/fcs7/trans-script-py.git
+# Baixe o script
+wget https://raw.githubusercontent.com/fcs7/trans-script-py/main/translate.py
 chmod +x translate.py
 
-# OU copie para um diretório no PATH
-sudo cp translate.py /usr/local/bin/php-translate
+# OU clone o repositório
+git clone https://github.com/fcs7/trans-script-py.git
+cd trans-script-py
 ```
 
 **Dependências**: Python 3.6+ (já vem na maioria dos sistemas Linux)
@@ -34,35 +37,129 @@ O script detecta automaticamente seu sistema e instala o `translate-shell` se ne
 
 ## 📖 Uso
 
-### Sintaxe básica
+### Modo 1: Auto-detecção Interativa (Recomendado) 🆕
+
+Ideal quando você não sabe onde estão os arquivos de localização:
 
 ```bash
-python3 translate.py --dir-in <diretório_entrada> --dir-out <diretório_saída>
+python3 translate.py --find /var/www/meu-projeto
 ```
 
-### Exemplos
+**O que acontece:**
+1. 🔍 Busca recursivamente por diretórios com arquivos PHP de localização
+2. 📊 Mostra lista de candidatos com estatísticas (número de arquivos, strings)
+3. 🎯 Detecta automaticamente idioma (EN, PT-BR, ES, FR, etc.)
+4. ✨ Permite escolher interativamente qual diretório traduzir
+5. 💡 Sugere automaticamente o diretório de saída
+
+**Exemplo de saída:**
+```
+🔍 Procurando diretórios de localização em: /var/www/app
+
+📂 Encontrados 2 diretórios com arquivos de localização:
+
+  [1] /var/www/app/lang/en [EN]
+      └─ 15 arquivos PHP, ~2500 strings
+      └─ Exemplos: common.php, interface.php, api.php
+
+  [2] /var/www/app/lang/es [ES]
+      └─ 15 arquivos PHP, ~2400 strings
+      └─ Exemplos: common.php, interface.php, api.php
+
+Digite o número do diretório de entrada [1-2] (ou 'q' para sair): 1
+
+📁 Diretório de entrada selecionado: /var/www/app/lang/en
+📁 Sugestão de saída: /var/www/app/lang/br
+
+Usar diretório sugerido? [S/n]: s
+```
+
+### Modo 2: Auto-detecção Automática (CI/CD) 🆕
+
+Para scripts automatizados e CI/CD:
 
 ```bash
-# Exemplo 1: Diretórios locais
+python3 translate.py --find /var/www/app --auto-translate --dir-out ./br_translated
+```
+
+**Requer:**
+- Exatamente **1 diretório EN** detectado
+- `--dir-out` especificado
+- Não pede confirmação
+
+### Modo 3: Manual (Clássico)
+
+Quando você já sabe os caminhos:
+
+```bash
 python3 translate.py --dir-in ./en --dir-out ./br
-
-# Exemplo 2: Caminhos absolutos
-python3 translate.py --dir-in ~/Documentos/en --dir-out ~/Documentos/br
-
-# Exemplo 3: Com delay customizado (mais rápido)
-python3 translate.py --dir-in ./en --dir-out ./br --delay 0.3
-
-# Exemplo 4: Delay maior (para evitar rate limiting)
-python3 translate.py --dir-in ./en --dir-out ./br --delay 1.0
 ```
 
-### Parâmetros
+## 📝 Parâmetros
 
-| Parâmetro | Obrigatório | Descrição | Padrão |
-|-----------|-------------|-----------|--------|
-| `--dir-in` | ✅ Sim | Diretório com arquivos PHP em inglês | - |
-| `--dir-out` | ✅ Sim | Diretório de saída para arquivos traduzidos | - |
-| `--delay` | ❌ Não | Delay em segundos entre traduções | `0.5` |
+### Modo Manual
+
+| Parâmetro | Descrição | Exemplo |
+|-----------|-----------|---------|
+| `--dir-in` | Diretório de entrada (inglês) | `--dir-in ./en` |
+| `--dir-out` | Diretório de saída (traduzido) | `--dir-out ./br` |
+
+### Modo Auto-detecção 🆕
+
+| Parâmetro | Descrição | Padrão |
+|-----------|-----------|--------|
+| `--find PATH` | Busca recursiva a partir deste caminho | - |
+| `--auto-translate` | Traduz automaticamente sem interação | `false` |
+| `--max-depth N` | Profundidade máxima da busca | `5` |
+| `--dir-out` | (Obrigatório com --auto-translate) | - |
+
+### Opções Gerais
+
+| Parâmetro | Descrição | Padrão |
+|-----------|-----------|--------|
+| `--delay N` | Segundos entre traduções | `0.5` |
+
+## 💡 Exemplos Práticos
+
+### Exemplo 1: Descobrir onde estão os arquivos
+
+```bash
+# Busca em todo o projeto web
+python3 translate.py --find /var/www
+
+# Busca apenas em um subdiretório
+python3 translate.py --find ~/meu-app/src
+```
+
+### Exemplo 2: Tradução interativa
+
+```bash
+# Busca, escolhe e traduz interativamente
+python3 translate.py --find /var/www/app
+
+# Com delay customizado
+python3 translate.py --find /var/www/app --delay 0.3
+```
+
+### Exemplo 3: CI/CD automatizado
+
+```bash
+# Para pipelines GitLab/GitHub Actions
+python3 translate.py \
+  --find /app \
+  --auto-translate \
+  --dir-out /app/lang/br \
+  --delay 0.2
+```
+
+### Exemplo 4: Vários idiomas, várias versões
+
+```bash
+# Encontrar e traduzir múltiplos projetos
+for project in /var/www/*/; do
+  python3 translate.py --find "$project" --auto-translate --dir-out "${project}/lang/br"
+done
+```
 
 ## 📁 Estrutura de arquivos
 
@@ -82,7 +179,20 @@ en/                          br/
 
 ## 🔧 Como funciona
 
-O script processa arquivos `.php` linha por linha:
+### Detecção automática de diretórios 🆕
+
+A busca procura por diretórios que:
+- ✅ Contêm arquivos `.php`
+- ✅ Têm pelo menos 5 ocorrências de `$msg_arr`
+- ✅ Não são diretórios de sistema (`node_modules`, `.git`, `vendor`, etc.)
+
+Detecta idioma automaticamente:
+- `en`, `english`, `en_us`, `en-us` → **EN**
+- `br`, `pt-br`, `pt_br`, `portuguese` → **PT-BR**
+- `es`, `spanish`, `español` → **ES**
+- `fr`, `french`, `français` → **FR**
+- `de`, `german`, `deutsch` → **DE**
+- `it`, `italian`, `italiano` → **IT**
 
 ### Formato reconhecido
 
@@ -180,7 +290,17 @@ sudo pacman -S translate-shell
 trans --version
 ```
 
-### Erro: "Diretório de entrada não encontrado"
+### Nenhum diretório encontrado com --find
+
+```bash
+# Aumentar profundidade da busca
+python3 translate.py --find /var/www --max-depth 10
+
+# Verificar manualmente se há arquivos PHP com $msg_arr
+grep -r '\$msg_arr' /var/www --include="*.php"
+```
+
+### Erro: "Caminho não encontrado"
 
 Verifique se o caminho está correto:
 
@@ -229,22 +349,36 @@ grep -r '__PH' br/
 
 ## 📝 Exemplo completo
 
+### Cenário: Projeto web desconhecido
+
 ```bash
-# 1. Preparar estrutura
-mkdir -p project/en project/br
-cp -r /caminho/original/* project/en/
+# 1. Descobrir onde estão os arquivos de localização
+python3 translate.py --find /var/www/meu-projeto
 
-# 2. Executar tradução
-cd project
-python3 ~/Documents/translate.py --dir-in ./en --dir-out ./br
+# 2. Script mostra:
+#    [1] /var/www/meu-projeto/includes/lang/en [EN]
+#        └─ 20 arquivos PHP, ~3000 strings
 
-# 3. Verificar resultado
-php -l br/interface.php
-grep -c "msg_arr\[" en/interface.php  # Contar strings originais
-grep -c "msg_arr\[" br/interface.php  # Deve ser igual
+# 3. Escolher opção 1 e confirmar sugestão de saída
 
-# 4. Usar os arquivos traduzidos
-cp -r br/* /var/www/html/lang/pt-br/
+# 4. Aguardar conclusão (pode levar tempo)
+
+# 5. Verificar resultado
+php -l /var/www/meu-projeto/includes/lang/br/interface.php
+```
+
+### Cenário: CI/CD Pipeline
+
+```yaml
+# .gitlab-ci.yml
+translate-to-br:
+  stage: build
+  script:
+    - python3 translate.py --find /app/lang --auto-translate --dir-out /app/lang/br --delay 0.3
+    - find /app/lang/br -name '*.php' -exec php -l {} \;
+  artifacts:
+    paths:
+      - app/lang/br/
 ```
 
 ## 🤝 Contribuindo
@@ -265,6 +399,7 @@ MIT License - sinta-se livre para usar e modificar.
 
 - [translate-shell](https://github.com/soimort/translate-shell) - Ferramenta de tradução via CLI
 - [Google Translate API](https://translate.google.com) - Engine de tradução (usado pelo translate-shell)
+- [Repositório GitHub](https://github.com/fcs7/trans-script-py)
 
 ## ⚠️ Avisos
 
@@ -272,6 +407,22 @@ MIT License - sinta-se livre para usar e modificar.
 - **Rate limiting**: Google Translate pode bloquear temporariamente após muitas requisições
 - **Contexto**: O tradutor não entende contexto de software, revise termos técnicos
 - **Backup**: Sempre mantenha backup dos arquivos originais
+- **Auto-detecção**: O modo `--find` ignora diretórios de sistema automaticamente, mas pode encontrar falsos positivos
+
+## 🆕 Changelog
+
+### v2.0 - Auto-detecção de diretórios
+- ✅ Modo `--find` para busca recursiva
+- ✅ Detecção automática de idioma
+- ✅ Modo interativo com seleção
+- ✅ Modo `--auto-translate` para CI/CD
+- ✅ Sugestão inteligente de diretório de saída
+
+### v1.0 - Release inicial
+- ✅ Tradução EN → PT-BR
+- ✅ Proteção de placeholders
+- ✅ Resume automático
+- ✅ Auto-instalação do translate-shell
 
 ---
 
