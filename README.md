@@ -1,10 +1,6 @@
 # 🌐 PHP Translation Tool (EN → PT-BR)
 
 Traduz automaticamente arquivos de localização PHP do inglês para português brasileiro.
-
-**Características:**
-- ⚡ **Rápido**: Cache inteligente + processamento paralelo (10-20x mais rápido)
-- 🎯 **Inteligente**: Auto-detecta diretórios de localização
 - 🔄 **Confiável**: Retoma de onde parou se interrompido
 - 🛡️ **Seguro**: Preserva placeholders, HTML e formatação
 
