@@ -40,27 +40,28 @@ export default function App() {
   }, [isAuthenticated, joinJob, setJobData])
 
   // ─── Polling de status como fallback ao reconectar ───────────────────────
+  // - Job em estado final: polling desnecessário, para completamente.
+  // - WebSocket conectado: polling de segurança a cada 30s.
+  // - WebSocket desconectado: polling ativo a cada 5s.
   useEffect(() => {
     if (!currentJobId) return
 
-    let intervalId
+    const TERMINAL = ['completed', 'failed', 'cancelled']
+    if (TERMINAL.includes(jobData?.status)) return
 
     const poll = async () => {
       try {
         const data = await getJobStatus(currentJobId)
         setJobData(data)
-        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
-          clearInterval(intervalId)
-        }
       } catch {
         // ignora erros de rede
       }
     }
 
-    poll() // busca imediata ao montar
-    intervalId = setInterval(poll, 5000)
+    poll() // busca imediata ao montar/reconectar
+    const intervalId = setInterval(poll, connected ? 30_000 : 5_000)
     return () => clearInterval(intervalId)
-  }, [currentJobId, setJobData])
+  }, [currentJobId, connected, jobData?.status, setJobData])
 
   // ─── Handlers ────────────────────────────────────────────────────────────
 
