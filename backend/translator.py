@@ -16,7 +16,10 @@ from datetime import datetime
 import backend.translate as trans_engine
 
 from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
-from backend.auth import get_cached_translation_db, save_cached_translation_db
+from backend.auth import (
+    get_cached_translation_db, save_cached_translation_db,
+    save_job_db, load_jobs_db, load_job_db, delete_job_db, cleanup_old_jobs_db,
+)
 
 
 # ============================================================================
@@ -92,6 +95,11 @@ def _get(job_id):
 def _put(job):
     with _jobs_lock:
         _jobs[job.job_id] = job
+
+
+def _persist(job):
+    """Salva estado atual do job no SQLite."""
+    save_job_db(job.to_dict())
 
 
 def _pop(job_id):
@@ -297,6 +305,7 @@ def _run(job, socketio):
     log.info(f'[{job.job_id}] Iniciando traducao (delay={job.delay}s)')
     job.status = 'running'
     job.started_at = datetime.now().isoformat()
+    _persist(job)
     socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
 
     try:
@@ -325,6 +334,7 @@ def _run(job, socketio):
             job.errors.append("Nenhum arquivo PHP encontrado no arquivo enviado")
             job.status = 'failed'
             job.finished_at = datetime.now().isoformat()
+            _persist(job)
             socketio.emit('translation_error', job.to_dict(), room=job.job_id)
             return
 
@@ -334,6 +344,7 @@ def _run(job, socketio):
             if job._cancel_flag:
                 job.status = 'cancelled'
                 job.finished_at = datetime.now().isoformat()
+                _persist(job)
                 log.info(f'[{job.job_id}] Cancelado pelo usuario ({idx}/{job.total_files} arquivos)')
                 socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
                 return
@@ -370,6 +381,7 @@ def _run(job, socketio):
 
         job.status = 'completed'
         job.finished_at = datetime.now().isoformat()
+        _persist(job)
 
         elapsed = (datetime.fromisoformat(job.finished_at) -
                    datetime.fromisoformat(job.started_at)).total_seconds()
@@ -382,6 +394,7 @@ def _run(job, socketio):
         job.status = 'failed'
         job.finished_at = datetime.now().isoformat()
         job.errors.append(f"Erro fatal: {str(e)}")
+        _persist(job)
         log.error(f'[{job.job_id}] FALHA FATAL: {e}', exc_info=True)
         socketio.emit('translation_error', job.to_dict(), room=job.job_id)
 
@@ -405,6 +418,7 @@ def start_translation(archive_path, delay, socketio, user_email=''):
 
     job = TranslationJob(job_id, php_dir, output_dir, delay, user_email)
     _put(job)
+    _persist(job)
 
     threading.Thread(target=_run, args=(job, socketio), daemon=True).start()
     log.info(f'[{job_id}] Thread de traducao iniciada')
@@ -412,25 +426,40 @@ def start_translation(archive_path, delay, socketio, user_email=''):
 
 
 def get_job(job_id):
-    return _get(job_id)
+    """Busca job na memoria; se nao encontrado, tenta SQLite."""
+    job = _get(job_id)
+    if job:
+        return job
+    return load_job_db(job_id)
 
 
 def delete_job(job_id):
     job = _pop(job_id)
-    if job:
-        job_dir = os.path.join(JOBS_FOLDER, job_id)
+    delete_job_db(job_id)
+    job_dir = os.path.join(JOBS_FOLDER, job_id)
+    if os.path.isdir(job_dir):
         shutil.rmtree(job_dir, ignore_errors=True)
-        log.info(f'[{job_id}] Job removido e arquivos limpos')
-        return True
-    return False
+    log.info(f'[{job_id}] Job removido e arquivos limpos')
+    return True
 
 
 def list_jobs(user_email=None):
+    """Lista jobs combinando memoria (ativos) com SQLite (historico)."""
+    # Jobs em memoria (podem estar mais atualizados)
     with _jobs_lock:
-        jobs = list(_jobs.values())
-    if user_email:
-        jobs = [j for j in jobs if j.user_email == user_email]
-    return [j.to_dict() for j in jobs]
+        mem_jobs = {j.job_id: j.to_dict() for j in _jobs.values()
+                    if not user_email or j.user_email == user_email}
+
+    # Jobs do SQLite
+    db_jobs = load_jobs_db(user_email)
+
+    # Combina: memoria tem prioridade (dados mais recentes de jobs ativos)
+    combined = {j['job_id']: j for j in db_jobs}
+    combined.update(mem_jobs)
+
+    # Ordena por data de criacao (mais recente primeiro)
+    result = sorted(combined.values(), key=lambda j: j['created_at'], reverse=True)
+    return result
 
 
 def cleanup_old_jobs(max_age_hours=24):
@@ -445,5 +474,6 @@ def cleanup_old_jobs(max_age_hours=24):
                 to_delete.append(jid)
     for jid in to_delete:
         delete_job(jid)
+    cleanup_old_jobs_db(max_age_hours)
     if to_delete:
         log.info(f'Cleanup: {len(to_delete)} jobs antigos removidos')

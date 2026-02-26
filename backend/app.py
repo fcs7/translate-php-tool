@@ -243,9 +243,10 @@ def get_job_status(job_id):
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
+    job_dict = job.to_dict() if hasattr(job, 'to_dict') else job
+    if job_dict.get('user_email') != session['user_email']:
         return jsonify({'error': 'Acesso negado'}), 403
-    return jsonify(job.to_dict())
+    return jsonify(job_dict)
 
 
 @app.route('/api/jobs/<job_id>/download')
@@ -256,13 +257,17 @@ def download_job(job_id):
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
+    job_dict = job.to_dict() if hasattr(job, 'to_dict') else job
+    if job_dict.get('user_email') != session['user_email']:
         return jsonify({'error': 'Acesso negado'}), 403
-    if job.status != 'completed' or not job.output_zip:
+    output_zip = job.output_zip if hasattr(job, 'output_zip') else job_dict.get('output_zip')
+    if job_dict.get('status') != 'completed' or not output_zip:
         return jsonify({'error': 'Traducao ainda nao concluida'}), 400
+    if not os.path.exists(output_zip):
+        return jsonify({'error': 'Arquivo de saida nao encontrado no servidor'}), 404
     log.info(f'{request.remote_addr} download: {job_id}')
     return send_file(
-        job.output_zip,
+        output_zip,
         mimetype='application/zip',
         as_attachment=True,
         download_name=f'traducao_{job_id}.zip',
@@ -277,7 +282,8 @@ def remove_job(job_id):
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
+    job_dict = job.to_dict() if hasattr(job, 'to_dict') else job
+    if job_dict.get('user_email') != session['user_email']:
         return jsonify({'error': 'Acesso negado'}), 403
     delete_job(job_id)
     log.info(f'{request.remote_addr} deletou job: {job_id}')
@@ -292,8 +298,11 @@ def cancel_job(job_id):
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
+    job_dict = job.to_dict() if hasattr(job, 'to_dict') else job
+    if job_dict.get('user_email') != session['user_email']:
         return jsonify({'error': 'Acesso negado'}), 403
+    if not hasattr(job, 'cancel'):
+        return jsonify({'error': 'Job nao esta em execucao'}), 400
     if job.status != 'running':
         return jsonify({'error': 'Job nao esta em execucao'}), 400
     job.cancel()
@@ -323,11 +332,14 @@ def ws_join_job(data):
     if not _validate_job_id(job_id):
         return
     job = get_job(job_id)
-    if not job or job.user_email != session['user_email']:
+    if not job:
+        return
+    job_dict = job.to_dict() if hasattr(job, 'to_dict') else job
+    if job_dict.get('user_email') != session['user_email']:
         return
     join_room(job_id)
     log.debug(f'WS join_job: {job_id} ({request.remote_addr})')
-    socketio.emit('translation_progress', job.to_dict(), room=job_id)
+    socketio.emit('translation_progress', job_dict, room=job_id)
 
 
 # ============================================================================

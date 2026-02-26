@@ -1,5 +1,6 @@
-"""Modulo de autenticacao — OTP por e-mail + SQLite (usuarios + cache de traducoes)."""
+"""Modulo de autenticacao — OTP por e-mail + SQLite (usuarios + cache de traducoes + jobs)."""
 
+import json
 import os
 import random
 import sqlite3
@@ -51,6 +52,24 @@ def init_db():
                 hit_count        INTEGER DEFAULT 1,
                 created_at       TEXT    NOT NULL,
                 last_used_at     TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id              TEXT PRIMARY KEY,
+                user_email          TEXT NOT NULL,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                progress            INTEGER DEFAULT 0,
+                current_file        TEXT DEFAULT '',
+                total_files         INTEGER DEFAULT 0,
+                files_done          INTEGER DEFAULT 0,
+                total_strings       INTEGER DEFAULT 0,
+                translated_strings  INTEGER DEFAULT 0,
+                errors              TEXT DEFAULT '[]',
+                validation          TEXT,
+                output_zip          TEXT,
+                created_at          TEXT NOT NULL,
+                started_at          TEXT,
+                finished_at         TEXT
             );
         """)
     log.info('[AUTH] Banco de dados inicializado')
@@ -121,6 +140,137 @@ def save_cached_translation_db(source_text, translated_text):
                 )
     except Exception as e:
         log.debug(f'[CACHE] Erro ao salvar cache: {e}')
+
+
+# ============================================================================
+# Persistencia de jobs (SQLite)
+# ============================================================================
+
+def save_job_db(job_dict):
+    """Salva ou atualiza um job no SQLite."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO jobs
+                        (job_id, user_email, status, progress, current_file,
+                         total_files, files_done, total_strings, translated_strings,
+                         errors, validation, output_zip, created_at, started_at, finished_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        status             = excluded.status,
+                        progress           = excluded.progress,
+                        current_file       = excluded.current_file,
+                        total_files        = excluded.total_files,
+                        files_done         = excluded.files_done,
+                        total_strings      = excluded.total_strings,
+                        translated_strings = excluded.translated_strings,
+                        errors             = excluded.errors,
+                        validation         = excluded.validation,
+                        output_zip         = excluded.output_zip,
+                        started_at         = excluded.started_at,
+                        finished_at        = excluded.finished_at
+                    """,
+                    (
+                        job_dict['job_id'],
+                        job_dict.get('user_email', ''),
+                        job_dict['status'],
+                        job_dict.get('progress', 0),
+                        job_dict.get('current_file', ''),
+                        job_dict.get('total_files', 0),
+                        job_dict.get('files_done', 0),
+                        job_dict.get('total_strings', 0),
+                        job_dict.get('translated_strings', 0),
+                        json.dumps(job_dict.get('errors', [])),
+                        json.dumps(job_dict.get('validation')) if job_dict.get('validation') else None,
+                        job_dict.get('output_zip'),
+                        job_dict['created_at'],
+                        job_dict.get('started_at'),
+                        job_dict.get('finished_at'),
+                    ),
+                )
+    except Exception as e:
+        log.error(f'[DB] Erro ao salvar job {job_dict.get("job_id")}: {e}')
+
+
+def load_jobs_db(user_email=None):
+    """Carrega jobs do SQLite. Filtra por user_email se fornecido."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                if user_email:
+                    rows = conn.execute(
+                        "SELECT * FROM jobs WHERE user_email = ? ORDER BY created_at DESC",
+                        (user_email,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM jobs ORDER BY created_at DESC",
+                    ).fetchall()
+                return [_row_to_job_dict(r) for r in rows]
+    except Exception as e:
+        log.error(f'[DB] Erro ao carregar jobs: {e}')
+        return []
+
+
+def load_job_db(job_id):
+    """Carrega um unico job do SQLite."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                if row:
+                    return _row_to_job_dict(row)
+    except Exception as e:
+        log.error(f'[DB] Erro ao carregar job {job_id}: {e}')
+    return None
+
+
+def delete_job_db(job_id):
+    """Remove um job do SQLite."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+    except Exception as e:
+        log.error(f'[DB] Erro ao deletar job {job_id}: {e}')
+
+
+def cleanup_old_jobs_db(max_age_hours=24):
+    """Remove jobs finalizados com mais de X horas do SQLite."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM jobs
+                    WHERE status IN ('completed', 'failed', 'cancelled')
+                    AND datetime(created_at) < datetime('now', ? || ' hours')
+                    """,
+                    (f'-{max_age_hours}',),
+                )
+    except Exception as e:
+        log.error(f'[DB] Erro no cleanup de jobs: {e}')
+
+
+def _row_to_job_dict(row):
+    """Converte uma linha SQLite em dicionario de job."""
+    d = dict(row)
+    try:
+        d['errors'] = json.loads(d.get('errors') or '[]')
+    except (json.JSONDecodeError, TypeError):
+        d['errors'] = []
+    try:
+        val = d.get('validation')
+        d['validation'] = json.loads(val) if val else None
+    except (json.JSONDecodeError, TypeError):
+        d['validation'] = None
+    d['has_output'] = d.get('output_zip') is not None
+    return d
 
 
 # ============================================================================
