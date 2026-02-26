@@ -299,10 +299,13 @@ if [ -n "$DOMAIN_VAL" ]; then
     CERT_PATH="/etc/letsencrypt/live/$DOMAIN_VAL/fullchain.pem"
 
     if [ -f "$CERT_PATH" ]; then
-        # Certificado ja existe — renovar se necessario
-        skip "certificado SSL existente — verificando renovacao"
+        # Certificado ja existe — reaplicar SSL ao Nginx (config foi sobrescrita acima)
+        # e verificar renovacao
+        skip "certificado SSL existente — reaplicando ao Nginx"
+        certbot install --nginx -d "$DOMAIN_VAL" --non-interactive 2>/dev/null \
+            || warn "certbot install falhou — tente manualmente: certbot --nginx -d $DOMAIN_VAL"
         certbot renew --quiet --nginx 2>/dev/null || true
-        ok "Certificado SSL verificado"
+        ok "SSL reaplicado ao Nginx"
     else
         log "  Obtendo certificado SSL para $DOMAIN_VAL..."
 
