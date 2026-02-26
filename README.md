@@ -1,323 +1,299 @@
-# 🌐 PHP Translation Tool (EN → PT-BR)
+# Trans-Script Web
 
-Traduz automaticamente arquivos de localização PHP do inglês para português brasileiro.
-- 🔄 **Confiável**: Retoma de onde parou se interrompido
-- 🛡️ **Seguro**: Preserva placeholders, HTML e formatação
+Aplicação web para tradução automática de arquivos de localização PHP (EN → PT-BR).
+
+Faça upload de um `.zip` com seus arquivos PHP, acompanhe o progresso em tempo real e baixe o resultado traduzido.
 
 ---
 
-## 📥 Instalação
+## Como funciona
 
-### Passo 1: Baixar o script
+1. Upload de arquivo `.zip`, `.rar` ou `.tar.gz` contendo PHPs no formato `$msg_arr`
+2. Backend Flask processa a tradução usando `translate-shell`
+3. Progresso via WebSocket em tempo real no frontend React
+4. Download do `.zip` com os arquivos traduzidos
+
+---
+
+## Requisitos
+
+- Debian 12 / Ubuntu 22+ (ou derivados)
+- Python 3.10+
+- Node.js 18+
+- Nginx
+- `translate-shell`
+
+---
+
+## Instalação no Debian (Deploy automático)
 
 ```bash
-# Clone o repositório
-git clone https://github.com/fcs7/trans-script-py.git
-cd trans-script-py
+# 1. Clonar o repositório
+git clone https://github.com/fcs7/translate-php-tool.git
+cd translate-php-tool
+
+# 2. Executar o deploy (instala tudo automaticamente)
+chmod +x deploy.sh
+sudo ./deploy.sh
 ```
 
-### Passo 2: Instalar no sistema (Opcional - Recomendado)
+O script `deploy.sh` faz automaticamente:
+- Instala dependências via `apt` (Python, Node.js, Nginx, translate-shell)
+- Cria virtualenv Python e instala as libs
+- Compila o frontend React (`npm run build`)
+- Configura o Nginx como reverse proxy
+- Cria e ativa o serviço systemd
 
-**Opção A: Instalar em /usr/local/bin (requer sudo)**
+Ao final, a aplicação estará disponível em `http://IP_DO_SERVIDOR`.
+
+---
+
+## Configuração manual (passo a passo)
+
+### 1. Dependências do sistema
+
 ```bash
-# Tornar executável
-chmod +x translate.py
-
-# Copiar para PATH do sistema
-sudo cp translate.py /usr/local/bin/translate-php
-
-# Agora pode usar de qualquer lugar:
-translate-php --help
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip nginx nodejs npm translate-shell unrar
 ```
 
-**Opção B: Adicionar ao seu PATH pessoal (sem sudo)**
+### 2. Copiar o projeto
+
 ```bash
-# Tornar executável
-chmod +x translate.py
-
-# Mover para um diretório no seu home
-mkdir -p ~/.local/bin
-cp translate.py ~/.local/bin/translate-php
-
-# Adicionar ao PATH (adicione essa linha ao final do ~/.bashrc)
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-
-# Recarregar configuração
-source ~/.bashrc
-
-# Agora pode usar de qualquer lugar:
-translate-php --help
+sudo mkdir -p /opt/trans-script-web
+sudo rsync -a --exclude='venv' --exclude='node_modules' --exclude='.git' \
+    ./ /opt/trans-script-web/
+sudo mkdir -p /opt/trans-script-web/backend/{uploads,jobs,static}
+sudo chown -R $USER:$USER /opt/trans-script-web
 ```
 
-### Passo 3: Dependências
-
-O script instalará automaticamente o `translate-shell` na primeira execução.
-
-Se preferir instalar manualmente:
+### 3. Ambiente Python
 
 ```bash
-# Debian/Ubuntu
+cd /opt/trans-script-web
+python3 -m venv venv
+venv/bin/pip install --upgrade pip
+venv/bin/pip install -r backend/requirements.txt
+```
+
+### 4. Compilar o frontend React
+
+```bash
+cd /opt/trans-script-web/frontend
+npm install
+npm run build
+# O build vai para backend/static/ automaticamente
+```
+
+### 5. Configurar Nginx
+
+```bash
+sudo cp config/nginx.conf /etc/nginx/sites-available/trans-script-web
+sudo ln -s /etc/nginx/sites-available/trans-script-web /etc/nginx/sites-enabled/trans-script-web
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+O arquivo `config/nginx.conf` configura:
+- Reverse proxy da porta 80 → Flask na porta 5000
+- Suporte a WebSocket (`/socket.io`)
+- Timeout estendido para traduções longas (`/api` → 300s)
+- Upload de até 100 MB
+
+### 6. Serviço systemd
+
+```bash
+sudo cp config/trans-script-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable trans-script-web
+sudo systemctl start trans-script-web
+```
+
+Verificar se está rodando:
+```bash
+systemctl status trans-script-web
+```
+
+---
+
+## SSL com Certbot (HTTPS)
+
+O Nginx suporta SSL via terminação no proxy. Para habilitar HTTPS com certificado gratuito (Let's Encrypt):
+
+### Pré-requisito
+
+O servidor precisa ter um domínio apontado para ele (não funciona com IP diretamente).
+
+### Instalar Certbot
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+```
+
+### Emitir e configurar o certificado
+
+```bash
+sudo certbot --nginx -d seu-dominio.com
+```
+
+O Certbot modifica automaticamente o Nginx para:
+- Redirecionar HTTP → HTTPS
+- Configurar o certificado SSL
+- Renovar automaticamente (via cron/systemd)
+
+### Verificar renovação automática
+
+```bash
+sudo certbot renew --dry-run
+```
+
+### Nginx com SSL (configuração manual)
+
+Se preferir configurar manualmente em `config/nginx.conf`:
+
+```nginx
+server {
+    listen 80;
+    server_name seu-dominio.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name seu-dominio.com;
+
+    ssl_certificate     /etc/letsencrypt/live/seu-dominio.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/seu-dominio.com/privkey.pem;
+
+    client_max_body_size 100M;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /socket.io {
+        proxy_pass http://127.0.0.1:5000/socket.io;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_read_timeout 86400;
+    }
+
+    location /api {
+        proxy_pass http://127.0.0.1:5000/api;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300;
+    }
+}
+```
+
+---
+
+## Gerenciamento do serviço
+
+```bash
+# Status
+systemctl status trans-script-web
+
+# Logs em tempo real
+journalctl -u trans-script-web -f
+
+# Reiniciar
+systemctl restart trans-script-web
+
+# Parar
+systemctl stop trans-script-web
+```
+
+---
+
+## API REST
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/health` | Status do servidor |
+| `POST` | `/api/upload` | Upload de arquivo para tradução |
+| `GET` | `/api/jobs` | Listar todos os jobs |
+| `GET` | `/api/jobs/<id>` | Status de um job |
+| `GET` | `/api/jobs/<id>/download` | Download do resultado |
+| `POST` | `/api/jobs/<id>/cancel` | Cancelar job em execução |
+| `DELETE` | `/api/jobs/<id>` | Remover job |
+
+**Parâmetros do upload (`POST /api/upload`):**
+- `file`: arquivo `.zip`, `.rar`, `.tar.gz` (máx. 100 MB)
+- `delay`: intervalo entre traduções em segundos (padrão: `0.2`, mín: `0.05`, máx: `5.0`)
+
+---
+
+## Limites padrão
+
+| Configuração | Valor |
+|---|---|
+| Tamanho máximo de upload | 100 MB |
+| Jobs simultâneos | 3 |
+| Rate limit por IP | 5s entre uploads |
+| Timeout de tradução (Nginx) | 300s |
+
+---
+
+## Estrutura do projeto
+
+```
+.
+├── backend/
+│   ├── app.py          # Flask — API REST + WebSocket + serve SPA
+│   ├── translator.py   # Engine de tradução (jobs, workers)
+│   ├── config.py       # Configurações centralizadas
+│   ├── wsgi.py         # Entry-point para Gunicorn
+│   └── requirements.txt
+├── frontend/
+│   └── src/            # React + Tailwind CSS
+├── config/
+│   ├── nginx.conf               # Config Nginx pronta para uso
+│   └── trans-script-web.service # Unit systemd
+└── deploy.sh           # Script de deploy automático
+```
+
+---
+
+## Problemas comuns
+
+### Serviço não inicia
+
+```bash
+journalctl -u trans-script-web -n 50
+```
+
+### Nginx retorna 502 Bad Gateway
+
+O Flask não está rodando. Verifique:
+```bash
+systemctl status trans-script-web
+systemctl restart trans-script-web
+```
+
+### `translate-shell` não encontrado
+
+```bash
 sudo apt install translate-shell
-
-# Fedora/RHEL
-sudo dnf install translate-shell
-
-# Arch Linux
-sudo pacman -S translate-shell
+# ou
+sudo snap install translate-shell
 ```
+
+### Upload rejeitado (413)
+
+Verifique `client_max_body_size` no `nginx.conf` e `MAX_CONTENT_LENGTH` em `backend/config.py`.
 
 ---
-
-## 🚀 Uso
-
-### Modo 1: Auto-detecção (Recomendado) 🎯
-
-**Quando usar:** Não sabe onde estão os arquivos de localização
-
-```bash
-# Procura automaticamente em todo o projeto
-translate-php --find /var/www/meu-projeto
-
-# O script vai:
-# 1. Encontrar diretórios com arquivos PHP de localização
-# 2. Detectar o idioma (en, pt-br, es, etc.)
-# 3. Perguntar qual diretório traduzir
-# 4. Sugerir diretório de saída
-# 5. Começar a tradução
-```
-
-**Exemplo de uso:**
-```bash
-$ translate-php --find /var/www/app
-
-🔍 Procurando diretórios de localização em: /var/www/app
-
-📂 Encontrados 1 diretório com arquivos de localização:
-
-  [1] /var/www/app/lang/en [EN]
-      └─ 15 arquivos PHP, ~2500 strings
-      └─ Exemplos: common.php, interface.php, api.php
-
-Digite o número do diretório [1] (ou 'q' para sair): 1
-
-📁 Diretório selecionado: /var/www/app/lang/en
-📁 Sugestão de saída: /var/www/app/lang/br
-
-Usar diretório sugerido? [S/n]: s
-
-🚀 Usando 4 workers paralelos
-📁 15 arquivos PHP encontrados
-
-[Processando...]
-✅ Completo. 15 arquivos processados.
-
-💾 Cache de traduções:
-   - 2847 strings traduzidas no total
-   - 1923 traduções únicas no cache
-   - 924 reutilizações de cache (32.5% economia)
-```
-
----
-
-### Modo 2: Manual (Quando já sabe os caminhos)
-
-```bash
-# Traduzir diretório específico
-translate-php --dir-in ./en --dir-out ./br
-
-# Exemplo prático:
-translate-php --dir-in /var/www/app/lang/en --dir-out /var/www/app/lang/br
-```
-
----
-
-### Modo 3: Automático (Para scripts e CI/CD)
-
-```bash
-# Traduz automaticamente sem perguntar nada
-translate-php --find /var/www/app --auto-translate --dir-out /var/www/app/lang/br
-```
-
-**Exemplo em script bash:**
-```bash
-#!/bin/bash
-# deploy.sh
-
-echo "Traduzindo localização..."
-translate-php --find /var/www/app --auto-translate --dir-out /var/www/app/lang/br
-
-if [ $? -eq 0 ]; then
-    echo "✅ Tradução concluída com sucesso!"
-else
-    echo "❌ Erro na tradução"
-    exit 1
-fi
-```
-
----
-
-## ⚙️ Opções
-
-| Opção | Descrição | Exemplo |
-|-------|-----------|---------|
-| `--find PATH` | Busca automática de diretórios | `--find /var/www` |
-| `--dir-in DIR` | Diretório de entrada (EN) | `--dir-in ./en` |
-| `--dir-out DIR` | Diretório de saída (BR) | `--dir-out ./br` |
-| `--auto-translate` | Traduz sem confirmação | Usado com `--find` |
-| `--delay N` | Delay entre traduções (padrão: 0.2s) | `--delay 0.1` |
-| `--validate` | Apenas valida tradução existente | `--validate` |
-
----
-
-## ⚡ Performance
-
-**Com cache + paralelização:**
-- 1.000 strings → ~5 minutos
-- 10.000 strings → ~30-40 minutos
-- 50.000 strings → ~2-3 horas
-
-**Velocidade: 10-20x mais rápido que tradução linha por linha!**
-
-O script:
-- Usa cache para evitar re-traduzir strings duplicadas
-- Processa múltiplos arquivos em paralelo (4 workers)
-- Retoma automaticamente se interrompido (Ctrl+C)
-
----
-
-## 📁 Estrutura de Arquivos
-
-O script mantém a estrutura de diretórios:
-
-```
-Entrada:                  Saída:
-en/                       br/
-├── common.php           ├── common.php
-├── interface.php        ├── interface.php
-└── modules/             └── modules/
-    └── api.php              └── api.php
-```
-
----
-
-## ❓ Problemas Comuns
-
-### "translate-shell não encontrado"
-
-```bash
-# Instale manualmente (escolha seu sistema):
-sudo apt install translate-shell        # Debian/Ubuntu
-sudo dnf install translate-shell        # Fedora/RHEL
-sudo pacman -S translate-shell          # Arch Linux
-```
-
-### "Nenhum diretório encontrado"
-
-```bash
-# Aumente a profundidade da busca
-translate-php --find /var/www --max-depth 10
-
-# Ou verifique manualmente:
-grep -r '\$msg_arr' /var/www --include="*.php"
-```
-
-### Script muito lento / Rate limiting
-
-```bash
-# Aumente o delay entre traduções
-translate-php --dir-in ./en --dir-out ./br --delay 0.5
-```
-
-### Retomar tradução interrompida
-
-```bash
-# Simplesmente execute novamente o mesmo comando
-# O script continuará de onde parou automaticamente
-translate-php --dir-in ./en --dir-out ./br
-```
-
----
-
-## 🔧 Exemplos Práticos
-
-### Exemplo 1: Projeto novo
-
-```bash
-# 1. Entrar no diretório do projeto
-cd /var/www/meu-projeto
-
-# 2. Encontrar e traduzir
-translate-php --find .
-
-# 3. Seguir as instruções na tela
-```
-
-### Exemplo 2: Atualizar tradução existente
-
-```bash
-# Se já traduziu antes e quer atualizar:
-translate-php --dir-in ./lang/en --dir-out ./lang/br
-
-# O script vai:
-# - Pular arquivos já completos
-# - Retomar arquivos incompletos
-# - Traduzir apenas novos arquivos
-```
-
-### Exemplo 3: CI/CD (GitLab/GitHub Actions)
-
-```yaml
-# .gitlab-ci.yml
-translate-to-br:
-  stage: build
-  script:
-    - git clone https://github.com/fcs7/trans-script-py.git
-    - cd trans-script-py
-    - python3 translate.py --find /app/lang --auto-translate --dir-out /app/lang/br
-    - find /app/lang/br -name '*.php' -exec php -l {} \;  # Validar sintaxe
-  artifacts:
-    paths:
-      - app/lang/br/
-```
-
----
-
-## 🆘 Precisa de Ajuda?
-
-```bash
-# Ver todas as opções
-translate-php --help
-
-# Reportar problemas
-https://github.com/fcs7/trans-script-py/issues
-```
-
----
-
-## 📝 Changelog
-
-### v2.2 - Multiprocessing (2026-02-07)
-- ✅ **Processamento paralelo**: 4 workers simultâneos
-- ✅ **Cache compartilhado**: Workers compartilham traduções
-- ✅ **10-20x mais rápido** que versão original
-
-### v2.1 - Cache Inteligente (2026-02-07)
-- ✅ Cache de traduções duplicadas
-- ✅ Delay otimizado (0.2s)
-- ✅ Estatísticas de cache
-
-### v2.0 - Auto-detecção
-- ✅ Busca automática de diretórios
-- ✅ Detecção de idioma
-- ✅ Modo interativo e automático
-
-### v1.0 - Release Inicial
-- ✅ Tradução EN → PT-BR
-- ✅ Proteção de placeholders
-- ✅ Sistema de resume
-
----
-
-**Desenvolvido para facilitar a localização de projetos PHP** 🚀
 
 Licença: MIT
