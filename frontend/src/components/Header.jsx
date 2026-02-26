@@ -7,7 +7,6 @@ export default function Header({ user, onLogout }) {
         </div>
         <div className="flex-1">
           <h1 className="text-xl font-bold text-white">Trans-Script</h1>
-          <p className="text-xs text-gray-400">Tradutor PHP &middot; EN &rarr; PT-BR</p>
         </div>
 
         {user && onLogout && (
