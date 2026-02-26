@@ -27,6 +27,17 @@ test_data/
 test_output/
 *.tmp
 
+# Web app — backend
+venv/
+backend/uploads/
+backend/jobs/
+backend/static/
+backend/*.log
+
+# Web app — frontend
+frontend/node_modules/
+frontend/dist/
+
 # Backup files
 *.bak
 *.backup

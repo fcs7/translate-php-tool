@@ -28,10 +28,10 @@ DEFAULT_DELAY = 0.2  # Reduzido de 0.5s para 0.2s (otimização)
 
 # === Regex ===
 SINGLE_QUOTE_RE = re.compile(
-    r"^(\$msg_arr\[.*?\]\s*=\s*')((?:[^'\\]|\\.)*)(';\s*;?\s*)$"
+    r"^(\s*\$msg_arr\[.*?\]\s*=\s*')((?:[^'\\]|\\.)*)(';\s*;?\s*)$"
 )
 DOUBLE_QUOTE_RE = re.compile(
-    r'^(\$msg_arr\[.*?\]\s*=\s*")((?:[^"\\]|\\.)*)(";?\s*;?\s*)$'
+    r'^(\s*\$msg_arr\[.*?\]\s*=\s*")((?:[^"\\]|\\.)*)(";?\s*;?\s*)$'
 )
 PLACEHOLDER_RE = re.compile(r'\{[a-zA-Z_][a-zA-Z0-9_]*\}')
 
