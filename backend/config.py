@@ -23,6 +23,19 @@ DEFAULT_DELAY = 0.2
 SOURCE_LANG = 'en'
 TARGET_LANG = 'pt-br'
 
+# Autenticacao
+SECRET_KEY = os.environ.get('SECRET_KEY', os.urandom(32).hex())
+DB_PATH = os.path.join(BASE_DIR, 'users.db')
+OTP_EXPIRY_MINUTES = 15
+OTP_MAX_ATTEMPTS = 3
+
+# SMTP (via variaveis de ambiente)
+SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+SMTP_USER = os.environ.get('SMTP_USER', '')
+SMTP_PASS = os.environ.get('SMTP_PASS', '')
+SMTP_FROM = os.environ.get('SMTP_FROM', 'Trans-Script <noreply@example.com>')
+
 # Garantir que diretorios existem
 for _folder in [UPLOAD_FOLDER, JOBS_FOLDER]:
     os.makedirs(_folder, exist_ok=True)

@@ -16,6 +16,7 @@ from datetime import datetime
 import backend.translate as trans_engine
 
 from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
+from backend.auth import get_cached_translation_db, save_cached_translation_db
 
 
 # ============================================================================
@@ -25,11 +26,12 @@ from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
 class TranslationJob:
     """Representa um job de traducao com estado e progresso."""
 
-    def __init__(self, job_id, input_dir, output_dir, delay=DEFAULT_DELAY):
+    def __init__(self, job_id, input_dir, output_dir, delay=DEFAULT_DELAY, user_email=''):
         self.job_id = job_id
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.delay = delay
+        self.user_email = user_email
 
         # Estado
         self.status = 'pending'
@@ -67,6 +69,7 @@ class TranslationJob:
             'finished_at': self.finished_at,
             'has_output': self.output_zip is not None,
             'validation': self.validation,
+            'user_email': self.user_email,
         }
 
     def cancel(self):
@@ -247,7 +250,20 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
 
                     text = trans_engine.prepare_for_translation(raw_value, qc)
                     text, ph_map = trans_engine.protect_placeholders(text)
+
+                    # Cache SQLite global: popula cache local antes de chamar translate-shell
+                    if text not in cache:
+                        db_result = get_cached_translation_db(text)
+                        if db_result:
+                            cache[text] = db_result
+
+                    was_cached = text in cache
                     translated = trans_engine.get_cached_translation(text, delay, cache)
+
+                    # Persiste no SQLite se foi uma nova traducao
+                    if not was_cached:
+                        save_cached_translation_db(text, translated)
+
                     translated = trans_engine.restore_placeholders(translated, ph_map)
                     translated = trans_engine.re_escape(translated, qc)
 
@@ -374,7 +390,7 @@ def _run(job, socketio):
 # API publica do servico
 # ============================================================================
 
-def start_translation(archive_path, delay, socketio):
+def start_translation(archive_path, delay, socketio, user_email=''):
     """Inicia novo job. Retorna job_id."""
     job_id = str(uuid.uuid4())[:8]
     job_dir = os.path.join(JOBS_FOLDER, job_id)
@@ -387,7 +403,7 @@ def start_translation(archive_path, delay, socketio):
     log.info(f'[{job_id}] Extraindo arquivo...')
     php_dir = _extract_archive(archive_path, input_dir)
 
-    job = TranslationJob(job_id, php_dir, output_dir, delay)
+    job = TranslationJob(job_id, php_dir, output_dir, delay, user_email)
     _put(job)
 
     threading.Thread(target=_run, args=(job, socketio), daemon=True).start()
@@ -409,9 +425,12 @@ def delete_job(job_id):
     return False
 
 
-def list_jobs():
+def list_jobs(user_email=None):
     with _jobs_lock:
-        return [j.to_dict() for j in _jobs.values()]
+        jobs = list(_jobs.values())
+    if user_email:
+        jobs = [j for j in jobs if j.user_email == user_email]
+    return [j.to_dict() for j in jobs]
 
 
 def cleanup_old_jobs(max_age_hours=24):

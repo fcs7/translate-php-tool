@@ -7,17 +7,23 @@ Monolito: serve API REST + WebSocket + frontend React (static).
 import os
 import re
 import time
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from datetime import timedelta
+from functools import wraps
+from flask import Flask, request, jsonify, send_from_directory, send_file, session
 from flask_cors import CORS
 from flask_socketio import SocketIO, join_room
 
 from backend.config import (
     UPLOAD_FOLDER, STATIC_FOLDER, MAX_CONTENT_LENGTH,
-    MAX_CONCURRENT_JOBS, RATE_LIMIT_SECONDS, log,
+    MAX_CONCURRENT_JOBS, RATE_LIMIT_SECONDS, SECRET_KEY, log,
 )
 from backend.translator import (
     start_translation, get_job, delete_job, list_jobs,
     cleanup_old_jobs, count_running_jobs,
+)
+from backend.auth import (
+    init_db, get_or_create_user,
+    generate_otp, verify_otp, send_otp_email,
 )
 
 # ============================================================================
@@ -26,7 +32,12 @@ from backend.translator import (
 
 app = Flask(__name__, static_folder=STATIC_FOLDER, static_url_path='')
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
-CORS(app)
+app.secret_key = SECRET_KEY
+app.permanent_session_lifetime = timedelta(days=30)
+CORS(app, supports_credentials=True)
+
+# Inicializar banco de dados
+init_db()
 
 try:
     import gevent  # noqa: F401
@@ -35,6 +46,20 @@ except ImportError:
     _async_mode = 'threading'
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode)
+
+# ============================================================================
+# Autenticacao
+# ============================================================================
+
+def login_required(f):
+    """Decorator: exige sessao ativa."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_email' not in session:
+            return jsonify({'error': 'Autenticacao necessaria'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
 
 # Rate limit simples: {ip: timestamp_ultimo_upload}
 _upload_timestamps = {}
@@ -86,6 +111,68 @@ def _check_rate_limit(ip):
 
 
 # ============================================================================
+# Rotas de autenticacao
+# ============================================================================
+
+@app.route('/api/auth/request-otp', methods=['POST'])
+def auth_request_otp():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+
+    if not email or '@' not in email or '.' not in email.split('@')[-1]:
+        return jsonify({'error': 'E-mail invalido'}), 400
+
+    code, remaining = generate_otp(email)
+    if code is None:
+        return jsonify({'error': f'Aguarde {remaining}s para solicitar um novo codigo'}), 429
+
+    try:
+        send_otp_email(email, code)
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+
+    log.info(f'[AUTH] OTP solicitado: {email}')
+    return jsonify({'message': 'Codigo enviado'}), 200
+
+
+@app.route('/api/auth/verify-otp', methods=['POST'])
+def auth_verify_otp():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    code = (data.get('code') or '').strip()
+
+    if not email or not code:
+        return jsonify({'error': 'E-mail e codigo sao obrigatorios'}), 400
+
+    ok, reason = verify_otp(email, code)
+    if not ok:
+        return jsonify({'error': reason}), 401
+
+    user = get_or_create_user(email)
+    session['user_email'] = email
+    session.permanent = True
+    log.info(f'[AUTH] Login: {email}')
+    return jsonify({'user': user}), 200
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    email = session.pop('user_email', None)
+    if email:
+        log.info(f'[AUTH] Logout: {email}')
+    return jsonify({'message': 'Logout realizado'}), 200
+
+
+@app.route('/api/auth/me')
+def auth_me():
+    email = session.get('user_email')
+    if not email:
+        return jsonify({'error': 'Nao autenticado'}), 401
+    user = get_or_create_user(email)
+    return jsonify({'user': user}), 200
+
+
+# ============================================================================
 # API REST
 # ============================================================================
 
@@ -95,6 +182,7 @@ def health():
 
 
 @app.route('/api/upload', methods=['POST'])
+@login_required
 def upload_file():
     """Recebe arquivo compactado com PHPs e inicia traducao."""
     ip = request.remote_addr
@@ -130,7 +218,7 @@ def upload_file():
     delay = max(0.05, min(float(request.form.get('delay', 0.2)), 5.0))
 
     try:
-        job_id = start_translation(filepath, delay, socketio)
+        job_id = start_translation(filepath, delay, socketio, user_email=session['user_email'])
         os.remove(filepath)
         log.info(f'{ip} job criado: {job_id} (delay={delay}s)')
         return jsonify({'job_id': job_id}), 201
@@ -142,27 +230,34 @@ def upload_file():
 
 
 @app.route('/api/jobs')
+@login_required
 def get_jobs():
-    return jsonify(list_jobs())
+    return jsonify(list_jobs(session['user_email']))
 
 
 @app.route('/api/jobs/<job_id>')
+@login_required
 def get_job_status(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
+    if job.user_email != session['user_email']:
+        return jsonify({'error': 'Acesso negado'}), 403
     return jsonify(job.to_dict())
 
 
 @app.route('/api/jobs/<job_id>/download')
+@login_required
 def download_job(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
+    if job.user_email != session['user_email']:
+        return jsonify({'error': 'Acesso negado'}), 403
     if job.status != 'completed' or not job.output_zip:
         return jsonify({'error': 'Traducao ainda nao concluida'}), 400
     log.info(f'{request.remote_addr} download: {job_id}')
@@ -175,22 +270,30 @@ def download_job(job_id):
 
 
 @app.route('/api/jobs/<job_id>', methods=['DELETE'])
+@login_required
 def remove_job(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
-    if delete_job(job_id):
-        log.info(f'{request.remote_addr} deletou job: {job_id}')
-        return jsonify({'message': 'Job removido'})
-    return jsonify({'error': 'Job nao encontrado'}), 404
+    job = get_job(job_id)
+    if not job:
+        return jsonify({'error': 'Job nao encontrado'}), 404
+    if job.user_email != session['user_email']:
+        return jsonify({'error': 'Acesso negado'}), 403
+    delete_job(job_id)
+    log.info(f'{request.remote_addr} deletou job: {job_id}')
+    return jsonify({'message': 'Job removido'})
 
 
 @app.route('/api/jobs/<job_id>/cancel', methods=['POST'])
+@login_required
 def cancel_job(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
     job = get_job(job_id)
     if not job:
         return jsonify({'error': 'Job nao encontrado'}), 404
+    if job.user_email != session['user_email']:
+        return jsonify({'error': 'Acesso negado'}), 403
     if job.status != 'running':
         return jsonify({'error': 'Job nao esta em execucao'}), 400
     job.cancel()
@@ -214,14 +317,17 @@ def ws_disconnect():
 
 @socketio.on('join_job')
 def ws_join_job(data):
+    if 'user_email' not in session:
+        return
     job_id = data.get('job_id', '')
     if not _validate_job_id(job_id):
         return
+    job = get_job(job_id)
+    if not job or job.user_email != session['user_email']:
+        return
     join_room(job_id)
     log.debug(f'WS join_job: {job_id} ({request.remote_addr})')
-    job = get_job(job_id)
-    if job:
-        socketio.emit('translation_progress', job.to_dict(), room=job_id)
+    socketio.emit('translation_progress', job.to_dict(), room=job_id)
 
 
 # ============================================================================

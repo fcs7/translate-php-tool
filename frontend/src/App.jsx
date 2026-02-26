@@ -1,13 +1,68 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import Header from './components/Header'
 import FileUpload from './components/FileUpload'
 import TranslationProgress from './components/TranslationProgress'
+import LoginPage from './pages/LoginPage'
 import { useSocket } from './hooks/useSocket'
-import { uploadZip, cancelJob, deleteJob } from './services/api'
+import { useAuth } from './hooks/useAuth'
+import { uploadZip, cancelJob, deleteJob, getJobs, getJobStatus } from './services/api'
 
 export default function App() {
+  const { user, loading, isAuthenticated, logout, refetch } = useAuth()
   const [currentJobId, setCurrentJobId] = useState(null)
-  const { jobData, connected, joinJob } = useSocket()
+  const { jobData, setJobData, connected, joinJob } = useSocket()
+  const hasRestoredRef = useRef(false)
+
+  // ─── Restaurar job ativo ao autenticar ────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) {
+      hasRestoredRef.current = false
+      return
+    }
+    if (hasRestoredRef.current) return
+    hasRestoredRef.current = true
+
+    getJobs()
+      .then(jobs => {
+        if (!Array.isArray(jobs) || !jobs.length) return
+        const sorted = [...jobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        // Prioriza job em execucao/pendente, depois o mais recente
+        const active =
+          sorted.find(j => j.status === 'running' || j.status === 'pending') ||
+          sorted[0]
+        if (active) {
+          setCurrentJobId(active.job_id)
+          setJobData(active)
+          joinJob(active.job_id)
+        }
+      })
+      .catch(() => {})
+  }, [isAuthenticated, joinJob, setJobData])
+
+  // ─── Polling de status como fallback ao reconectar ───────────────────────
+  useEffect(() => {
+    if (!currentJobId) return
+
+    let intervalId
+
+    const poll = async () => {
+      try {
+        const data = await getJobStatus(currentJobId)
+        setJobData(data)
+        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+          clearInterval(intervalId)
+        }
+      } catch {
+        // ignora erros de rede
+      }
+    }
+
+    poll() // busca imediata ao montar
+    intervalId = setInterval(poll, 5000)
+    return () => clearInterval(intervalId)
+  }, [currentJobId, setJobData])
+
+  // ─── Handlers ────────────────────────────────────────────────────────────
 
   const handleUpload = useCallback(async (file, delay) => {
     const { job_id } = await uploadZip(file, delay)
@@ -25,19 +80,36 @@ export default function App() {
     if (currentJobId) {
       await deleteJob(currentJobId)
       setCurrentJobId(null)
+      setJobData(null)
     }
-  }, [currentJobId])
+  }, [currentJobId, setJobData])
 
   const handleNewTranslation = useCallback(() => {
     setCurrentJobId(null)
-  }, [])
+    setJobData(null)
+  }, [setJobData])
 
+  // ─── Carregando sessao ───────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // ─── Nao autenticado → tela de login ────────────────────────────────────
+  if (!isAuthenticated) {
+    return <LoginPage onSuccess={() => refetch()} />
+  }
+
+  // ─── App principal ───────────────────────────────────────────────────────
   const showUpload = !currentJobId
   const showProgress = currentJobId && jobData
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
+      <Header user={user} onLogout={logout} />
 
       <main className="flex-1 flex items-start justify-center p-6">
         <div className="w-full max-w-lg space-y-6 mt-8">
@@ -69,11 +141,11 @@ export default function App() {
               />
             )}
 
-            {/* Esperando dados do WebSocket */}
+            {/* Esperando primeiro status */}
             {currentJobId && !jobData && (
               <div className="text-center py-8">
                 <div className="inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-gray-400 text-sm mt-3">Conectando...</p>
+                <p className="text-gray-400 text-sm mt-3">Carregando...</p>
               </div>
             )}
           </div>
