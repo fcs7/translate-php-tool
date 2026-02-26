@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import Header from './components/Header'
 import FileUpload from './components/FileUpload'
 import TranslationProgress from './components/TranslationProgress'
+import JobHistory from './components/JobHistory'
 import LoginPage from './pages/LoginPage'
 import { useSocket } from './hooks/useSocket'
 import { useAuth } from './hooks/useAuth'
@@ -11,33 +12,44 @@ export default function App() {
   const { user, loading, isAuthenticated, logout, refetch } = useAuth()
   const [currentJobId, setCurrentJobId] = useState(null)
   const { jobData, setJobData, connected, joinJob } = useSocket()
+  const [jobHistory, setJobHistory] = useState([])
   const hasRestoredRef = useRef(false)
+
+  // ─── Carregar historico de jobs ───────────────────────────────────────────
+  const fetchHistory = useCallback(async () => {
+    try {
+      const jobs = await getJobs()
+      if (Array.isArray(jobs)) {
+        setJobHistory(jobs)
+        return jobs
+      }
+    } catch {
+      // ignora erros de rede
+    }
+    return []
+  }, [])
 
   // ─── Restaurar job ativo ao autenticar ────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) {
       hasRestoredRef.current = false
+      setJobHistory([])
       return
     }
     if (hasRestoredRef.current) return
     hasRestoredRef.current = true
 
-    getJobs()
-      .then(jobs => {
-        if (!Array.isArray(jobs) || !jobs.length) return
-        const sorted = [...jobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        // Prioriza job em execucao/pendente, depois o mais recente
-        const active =
-          sorted.find(j => j.status === 'running' || j.status === 'pending') ||
-          sorted[0]
-        if (active) {
-          setCurrentJobId(active.job_id)
-          setJobData(active)
-          joinJob(active.job_id)
-        }
-      })
-      .catch(() => {})
-  }, [isAuthenticated, joinJob, setJobData])
+    fetchHistory().then(jobs => {
+      if (!jobs.length) return
+      // Restaura job ativo (running/pending) automaticamente
+      const active = jobs.find(j => j.status === 'running' || j.status === 'pending')
+      if (active) {
+        setCurrentJobId(active.job_id)
+        setJobData(active)
+        joinJob(active.job_id)
+      }
+    })
+  }, [isAuthenticated, joinJob, setJobData, fetchHistory])
 
   // ─── Polling de status como fallback ao reconectar ───────────────────────
   // - Job em estado final: polling desnecessário, para completamente.
@@ -63,13 +75,22 @@ export default function App() {
     return () => clearInterval(intervalId)
   }, [currentJobId, connected, jobData?.status, setJobData])
 
+  // ─── Atualizar historico quando um job termina ────────────────────────────
+  useEffect(() => {
+    const TERMINAL = ['completed', 'failed', 'cancelled']
+    if (jobData && TERMINAL.includes(jobData.status)) {
+      fetchHistory()
+    }
+  }, [jobData?.status, fetchHistory])
+
   // ─── Handlers ────────────────────────────────────────────────────────────
 
   const handleUpload = useCallback(async (file, delay) => {
     const { job_id } = await uploadZip(file, delay)
     setCurrentJobId(job_id)
     joinJob(job_id)
-  }, [joinJob])
+    fetchHistory()
+  }, [joinJob, fetchHistory])
 
   const handleCancel = useCallback(async () => {
     if (currentJobId) {
@@ -77,18 +98,27 @@ export default function App() {
     }
   }, [currentJobId])
 
-  const handleDelete = useCallback(async () => {
-    if (currentJobId) {
-      await deleteJob(currentJobId)
+  const handleDelete = useCallback(async (jobId) => {
+    const idToDelete = jobId || currentJobId
+    if (!idToDelete) return
+    await deleteJob(idToDelete)
+    if (idToDelete === currentJobId) {
       setCurrentJobId(null)
       setJobData(null)
     }
-  }, [currentJobId, setJobData])
+    fetchHistory()
+  }, [currentJobId, setJobData, fetchHistory])
 
   const handleNewTranslation = useCallback(() => {
     setCurrentJobId(null)
     setJobData(null)
   }, [setJobData])
+
+  const handleSelectJob = useCallback((job) => {
+    setCurrentJobId(job.job_id)
+    setJobData(job)
+    joinJob(job.job_id)
+  }, [joinJob, setJobData])
 
   // ─── Carregando sessao ───────────────────────────────────────────────────
   if (loading) {
@@ -107,6 +137,8 @@ export default function App() {
   // ─── App principal ───────────────────────────────────────────────────────
   const showUpload = !currentJobId
   const showProgress = currentJobId && jobData
+  // Historico: mostra jobs que NAO sao o job ativo atual
+  const historyJobs = jobHistory.filter(j => j.job_id !== currentJobId)
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -118,9 +150,19 @@ export default function App() {
           {/* Card principal */}
           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-2xl">
             <div className="mb-6">
-              <h2 className="text-lg font-semibold text-white">
-                {showUpload ? 'Enviar arquivos' : 'Progresso'}
-              </h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white">
+                  {showUpload ? 'Enviar arquivos' : 'Progresso'}
+                </h2>
+                {showProgress && (
+                  <button
+                    onClick={handleNewTranslation}
+                    className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    Voltar
+                  </button>
+                )}
+              </div>
               <p className="text-sm text-gray-400 mt-1">
                 {showUpload
                   ? 'Envie um ZIP com seus arquivos PHP para traduzir'
@@ -137,7 +179,7 @@ export default function App() {
               <TranslationProgress
                 job={jobData}
                 onCancel={handleCancel}
-                onDelete={handleDelete}
+                onDelete={() => handleDelete(currentJobId)}
                 onNewTranslation={handleNewTranslation}
               />
             )}
@@ -150,6 +192,15 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {/* Historico de jobs */}
+          {historyJobs.length > 0 && (
+            <JobHistory
+              jobs={historyJobs}
+              onSelect={handleSelectJob}
+              onDelete={handleDelete}
+            />
+          )}
 
           {/* Status da conexao */}
           <div className="flex justify-center">
