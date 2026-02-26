@@ -266,11 +266,17 @@ def send_otp_email(email, code):
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, [email], msg.as_string())
+        # Porta 465 = SSL implicito (SMTPS); demais = STARTTLS
+        if SMTP_PORT == 465:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_FROM, [email], msg.as_string())
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_FROM, [email], msg.as_string())
         log.info(f'[AUTH] OTP enviado para {email}')
     except Exception as e:
         log.error(f'[AUTH] Erro ao enviar OTP para {email}: {e}')

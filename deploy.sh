@@ -129,11 +129,30 @@ fi
 log "[1/6] Instalando dependencias do sistema..."
 
 apt-get update -qq
-apt-get install -y -qq \
+
+# Corrigir pacotes quebrados antes de instalar qualquer coisa
+apt-get install -f -y -qq 2>/dev/null || true
+dpkg --configure -a 2>/dev/null || true
+
+apt-get install -y \
     python3 python3-venv python3-pip \
     nginx \
-    nodejs npm \
-    || fail "Falha ao instalar pacotes base"
+    || fail "Falha ao instalar pacotes base (python3/nginx)"
+
+# Node.js: tenta versao do sistema; se muito antiga (<18) instala via NodeSource
+NODE_OK=0
+if command -v node &>/dev/null && [ "$(node -e 'process.exit(parseInt(process.versions.node)<18?1:0)' 2>/dev/null; echo $?)" = "0" ]; then
+    NODE_OK=1
+fi
+if [ "$NODE_OK" -eq 0 ]; then
+    apt-get install -y nodejs npm 2>/dev/null && NODE_OK=1 || true
+fi
+if [ "$NODE_OK" -eq 0 ]; then
+    warn "Instalando Node.js 20 via NodeSource..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+    apt-get install -y nodejs || fail "Falha ao instalar Node.js"
+fi
+ok "Node.js $(node -v) / npm $(npm -v)"
 
 # translate-shell: tenta via apt, senao instala manualmente
 apt-get install -y -qq translate-shell 2>/dev/null \
