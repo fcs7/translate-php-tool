@@ -6,7 +6,7 @@ export default function Header({ user, onLogout }) {
           T
         </div>
         <div className="flex-1">
-          <h1 className="text-xl font-bold text-white">Trans-Script</h1>
+          <h1 className="text-xl font-bold text-white">Tradutor</h1>
         </div>
 
         {user && onLogout && (
