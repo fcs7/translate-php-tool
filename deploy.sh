@@ -4,6 +4,7 @@
 #  Compativel: Debian 12 / Ubuntu 22+ e derivados
 #
 #  O que faz:
+#    0. Coleta configuracao SMTP interativamente (senha oculta)
 #    1. Instala dependencias do sistema (apt)
 #    2. Cria virtualenv Python e instala libs
 #    3. Compila frontend React (npm)
@@ -22,16 +23,24 @@ INSTALL_DIR="/opt/$APP_NAME"
 VENV_DIR="$INSTALL_DIR/venv"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEPLOY_USER="${SUDO_USER:-$USER}"
+ENV_FILE="/etc/trans-script-web/env"
 
 # --- Cores ---
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
 log()  { echo -e "${BLUE}[$(date +%H:%M:%S)]${NC} $1"; }
 ok()   { echo -e "${GREEN}  ✓${NC} $1"; }
+warn() { echo -e "${YELLOW}  !${NC} $1"; }
 fail() { echo -e "${RED}  ✗${NC} $1"; exit 1; }
+
+# --- Verificar root ---
+if [ "$EUID" -ne 0 ]; then
+    fail "Execute com sudo: sudo ./deploy.sh"
+fi
 
 echo ""
 echo "=================================================="
@@ -41,9 +50,77 @@ echo "  Destino: $INSTALL_DIR"
 echo "=================================================="
 echo ""
 
-# --- Verificar root ---
-if [ "$EUID" -ne 0 ]; then
-    fail "Execute com sudo: sudo ./deploy.sh"
+# =============================================================================
+# 0. Configuracao SMTP (interativo — senha oculta)
+# =============================================================================
+
+SMTP_HOST_VAL="smtp.gmail.com"
+SMTP_PORT_VAL="587"
+SMTP_USER_VAL=""
+SMTP_PASS_VAL=""
+SMTP_FROM_VAL=""
+SKIP_SMTP=0
+
+if [ -f "$ENV_FILE" ]; then
+    echo -e "${YELLOW}Arquivo de configuracao ja existe:${NC} $ENV_FILE"
+    echo ""
+    read -r -p "  Reconfigurar SMTP? [s/N] " _resp
+    echo ""
+    if [[ ! "$_resp" =~ ^[Ss]$ ]]; then
+        SKIP_SMTP=1
+        ok "Configuracao SMTP mantida"
+        echo ""
+    fi
+fi
+
+if [ "$SKIP_SMTP" -eq 0 ]; then
+    echo -e "${BLUE}Configuracao de e-mail (OTP)${NC}"
+    echo "  O sistema envia codigos de acesso por e-mail."
+    echo "  Para Gmail: use uma App Password (nao a senha da conta)."
+    echo "  Saiba mais: https://myaccount.google.com/apppasswords"
+    echo ""
+
+    # SMTP_USER
+    while true; do
+        read -r -p "  E-mail remetente (ex: seu@gmail.com): " SMTP_USER_VAL
+        SMTP_USER_VAL="${SMTP_USER_VAL// /}"
+        if [[ "$SMTP_USER_VAL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+            break
+        fi
+        warn "E-mail invalido. Tente novamente."
+    done
+
+    # SMTP_PASS (oculta)
+    while true; do
+        read -r -s -p "  Senha / App Password (nao aparece): " SMTP_PASS_VAL
+        echo ""
+        if [ -n "$SMTP_PASS_VAL" ]; then
+            break
+        fi
+        warn "Senha nao pode ser vazia."
+    done
+
+    # SMTP_FROM (opcional)
+    read -r -p "  Nome do remetente [Trans-Script]: " _from_name
+    _from_name="${_from_name:-Trans-Script}"
+    SMTP_FROM_VAL="$_from_name <$SMTP_USER_VAL>"
+
+    # SMTP personalizado (opcional)
+    read -r -p "  Servidor SMTP [$SMTP_HOST_VAL]: " _host
+    SMTP_HOST_VAL="${_host:-$SMTP_HOST_VAL}"
+
+    read -r -p "  Porta SMTP [$SMTP_PORT_VAL]: " _port
+    SMTP_PORT_VAL="${_port:-$SMTP_PORT_VAL}"
+
+    echo ""
+    echo "  Resumo:"
+    echo "    Servidor : $SMTP_HOST_VAL:$SMTP_PORT_VAL"
+    echo "    Conta    : $SMTP_USER_VAL"
+    echo "    Remetente: $SMTP_FROM_VAL"
+    echo ""
+    read -r -p "  Confirmar? [S/n] " _conf
+    [[ "$_conf" =~ ^[Nn]$ ]] && fail "Cancelado pelo usuario."
+    echo ""
 fi
 
 # =============================================================================
@@ -68,7 +145,7 @@ apt-get install -y -qq translate-shell 2>/dev/null \
 # unrar: pacote non-free, opcional (suporte a .rar)
 apt-get install -y -qq unrar 2>/dev/null \
     || apt-get install -y -qq unrar-free 2>/dev/null \
-    || echo "  ! unrar nao disponivel — arquivos .rar nao serao suportados"
+    || warn "unrar nao disponivel — arquivos .rar nao serao suportados"
 
 ok "Pacotes instalados"
 
@@ -82,7 +159,6 @@ rsync -a --exclude='venv' --exclude='node_modules' --exclude='.git' \
     --exclude='backend/uploads' --exclude='backend/jobs' --exclude='backend/static' \
     "$SCRIPT_DIR/" "$INSTALL_DIR/"
 
-# Criar diretorios de runtime
 mkdir -p "$INSTALL_DIR/backend/uploads"
 mkdir -p "$INSTALL_DIR/backend/jobs"
 mkdir -p "$INSTALL_DIR/backend/static"
@@ -97,7 +173,8 @@ log "[3/6] Configurando ambiente Python..."
 
 sudo -u "$DEPLOY_USER" python3 -m venv "$VENV_DIR"
 sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet -r "$INSTALL_DIR/backend/requirements.txt"
+sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet \
+    -r "$INSTALL_DIR/backend/requirements.txt"
 
 ok "Virtualenv pronto ($VENV_DIR)"
 
@@ -120,8 +197,6 @@ log "[5/6] Configurando Nginx..."
 
 cp "$INSTALL_DIR/config/nginx.conf" "/etc/nginx/sites-available/$APP_NAME"
 ln -sf "/etc/nginx/sites-available/$APP_NAME" "/etc/nginx/sites-enabled/$APP_NAME"
-
-# Remover default apenas se existir
 [ -f /etc/nginx/sites-enabled/default ] && rm -f /etc/nginx/sites-enabled/default
 
 nginx -t > /dev/null 2>&1 || fail "Configuracao Nginx invalida"
@@ -130,35 +205,38 @@ systemctl reload nginx
 ok "Nginx configurado (porta 80)"
 
 # =============================================================================
-# 6. Systemd service
+# 6. Arquivo de env + systemd
 # =============================================================================
-log "[6/6] Criando servico systemd..."
+log "[6/6] Configurando servico systemd..."
 
-# Criar arquivo de env se ainda nao existir
-ENV_FILE="/etc/trans-script-web/env"
 mkdir -p "/etc/trans-script-web"
-if [ ! -f "$ENV_FILE" ]; then
-    GENERATED_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-    cat > "$ENV_FILE" << ENV
-# Variaveis de ambiente — Trans-Script Web
-# Edite com: nano $ENV_FILE
-# Depois reinicie: systemctl restart $APP_NAME
+chmod 700 "/etc/trans-script-web"
 
-SECRET_KEY=$GENERATED_KEY
+# Gerar SECRET_KEY (sempre nova se o arquivo nao existia; manter se existia)
+if [ "$SKIP_SMTP" -eq 0 ]; then
+    SECRET_KEY_VAL=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
-# SMTP para envio de OTP (obrigatorio para producao)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASS=
-SMTP_FROM=Trans-Script <noreply@example.com>
-ENV
+    # Escrever env com permissao restrita (somente root le)
+    install -m 600 /dev/null "$ENV_FILE"
+    cat > "$ENV_FILE" << EOF
+# Trans-Script Web — variaveis de ambiente
+# Gerado em: $(date)
+# Para alterar: nano $ENV_FILE && systemctl restart $APP_NAME
+
+SECRET_KEY=$SECRET_KEY_VAL
+
+SMTP_HOST=$SMTP_HOST_VAL
+SMTP_PORT=$SMTP_PORT_VAL
+SMTP_USER=$SMTP_USER_VAL
+SMTP_PASS=$SMTP_PASS_VAL
+SMTP_FROM=$SMTP_FROM_VAL
+EOF
     chmod 600 "$ENV_FILE"
-    ok "Arquivo de env criado: $ENV_FILE  (configure SMTP_USER e SMTP_PASS)"
-else
-    ok "Arquivo de env ja existe: $ENV_FILE"
+    chown root:root "$ENV_FILE"
+    ok "Configuracao salva em $ENV_FILE (chmod 600)"
 fi
 
+# Escrever unit do systemd
 cat > "/etc/systemd/system/$APP_NAME.service" << UNIT
 [Unit]
 Description=Trans-Script Web — Tradutor PHP EN→PT-BR
@@ -190,9 +268,12 @@ systemctl restart "$APP_NAME"
 sleep 2
 
 if systemctl is-active --quiet "$APP_NAME"; then
-    ok "Servico ativo"
+    ok "Servico iniciado e habilitado no boot"
 else
-    fail "Servico nao iniciou — veja: journalctl -u $APP_NAME -n 50"
+    echo ""
+    echo "  Ultimas linhas do log:"
+    journalctl -u "$APP_NAME" -n 20 --no-pager | sed 's/^/    /'
+    fail "Servico nao iniciou — veja: journalctl -u $APP_NAME -f"
 fi
 
 # =============================================================================
@@ -203,9 +284,10 @@ echo ""
 echo "=================================================="
 echo -e "  ${GREEN}Deploy concluido com sucesso!${NC}"
 echo ""
-echo "  URL:      http://$IP"
-echo "  Status:   systemctl status $APP_NAME"
-echo "  Logs:     journalctl -u $APP_NAME -f"
+echo "  URL:       http://$IP"
+echo "  Env:       $ENV_FILE"
+echo "  Status:    systemctl status $APP_NAME"
+echo "  Logs:      journalctl -u $APP_NAME -f"
 echo "  Reiniciar: systemctl restart $APP_NAME"
 echo "=================================================="
 echo ""
