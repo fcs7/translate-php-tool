@@ -137,7 +137,9 @@ dpkg --configure -a 2>/dev/null || true
 apt-get install -y \
     python3 python3-venv python3-pip \
     nginx \
-    || fail "Falha ao instalar pacotes base (python3/nginx)"
+    rsync \
+    curl \
+    || fail "Falha ao instalar pacotes base (python3/nginx/rsync)"
 
 # Node.js: tenta versao do sistema; se muito antiga (<18) instala via NodeSource
 NODE_OK=0
