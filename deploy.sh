@@ -3,13 +3,7 @@
 #  Deploy automatico — Trans-Script Web
 #  Compativel: Debian 12 / Ubuntu 22+ e derivados
 #
-#  O que faz:
-#    0. Coleta configuracao SMTP interativamente (senha oculta)
-#    1. Instala dependencias do sistema (apt)
-#    2. Cria virtualenv Python e instala libs
-#    3. Compila frontend React (npm)
-#    4. Configura Nginx (reverse proxy + WebSocket)
-#    5. Cria e ativa servico systemd
+#  Idempotente: detecta o que ja esta instalado e pula etapas ja concluidas.
 #
 #  Uso:
 #    chmod +x deploy.sh && sudo ./deploy.sh
@@ -29,11 +23,13 @@ ENV_FILE="/etc/trans-script-web/env"
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m'
 
 log()  { echo -e "${BLUE}[$(date +%H:%M:%S)]${NC} $1"; }
 ok()   { echo -e "${GREEN}  ✓${NC} $1"; }
+skip() { echo -e "${CYAN}  ↷${NC} $1 ${CYAN}(ja instalado)${NC}"; }
 warn() { echo -e "${YELLOW}  !${NC} $1"; }
 fail() { echo -e "${RED}  ✗${NC} $1"; exit 1; }
 
@@ -51,19 +47,73 @@ echo "=================================================="
 echo ""
 
 # =============================================================================
-# 0. Configuracao SMTP (interativo — senha oculta)
+# Diagnostico inicial
+# =============================================================================
+echo -e "${BLUE}Diagnostico do sistema:${NC}"
+
+_diag_python=$(python3 --version 2>/dev/null || echo "ausente")
+_diag_node=$(node --version 2>/dev/null || echo "ausente")
+_diag_nginx=$(systemctl is-active nginx 2>/dev/null || echo "inativo")
+_diag_service=$(systemctl is-active "$APP_NAME" 2>/dev/null || echo "inativo")
+_diag_venv=$([ -f "$VENV_DIR/bin/gunicorn" ] && echo "ok" || echo "ausente")
+_diag_frontend=$([ -f "$INSTALL_DIR/backend/static/index.html" ] && echo "ok" || echo "ausente")
+_diag_ssl=$([ -d "/etc/letsencrypt/live" ] && ls /etc/letsencrypt/live 2>/dev/null | head -1 || echo "nenhum")
+_diag_env=$([ -f "$ENV_FILE" ] && echo "ok" || echo "ausente")
+
+echo "  Python3    : $_diag_python"
+echo "  Node.js    : $_diag_node"
+echo "  Nginx      : $_diag_nginx"
+echo "  Servico    : $_diag_service"
+echo "  Virtualenv : $_diag_venv"
+echo "  Frontend   : $_diag_frontend"
+echo "  SSL certs  : $_diag_ssl"
+echo "  Env file   : $_diag_env"
+echo ""
+
+# =============================================================================
+# 0. Configuracao interativa (dominio + SMTP)
 # =============================================================================
 
+DOMAIN_VAL=""
+SKIP_SMTP=0
 SMTP_HOST_VAL="smtp.gmail.com"
 SMTP_PORT_VAL="587"
 SMTP_USER_VAL=""
 SMTP_PASS_VAL=""
 SMTP_FROM_VAL=""
-SKIP_SMTP=0
 
-if [ -f "$ENV_FILE" ]; then
-    echo -e "${YELLOW}Arquivo de configuracao ja existe:${NC} $ENV_FILE"
+# ── Dominio ──────────────────────────────────────────────────────────────────
+# Tenta reutilizar dominio ja existente no certbot
+_existing_domain=$(ls /etc/letsencrypt/live 2>/dev/null | grep -v README | head -1 || true)
+
+echo -e "${BLUE}Dominio (SSL)${NC}"
+if [ -n "$_existing_domain" ]; then
+    echo "  Certificado existente detectado: $_existing_domain"
+    read -r -p "  Usar este dominio? [S/n] " _resp
+    if [[ ! "$_resp" =~ ^[Nn]$ ]]; then
+        DOMAIN_VAL="$_existing_domain"
+    fi
+fi
+
+if [ -z "$DOMAIN_VAL" ]; then
+    echo "  Informe o dominio para ativar HTTPS via Let's Encrypt."
+    echo "  O DNS deve apontar para este servidor. Enter para pular (HTTP apenas)."
     echo ""
+    read -r -p "  Dominio (ex: app.felipecs.com) ou Enter para pular: " DOMAIN_VAL
+    DOMAIN_VAL="${DOMAIN_VAL// /}"
+fi
+echo ""
+
+if [ -n "$DOMAIN_VAL" ]; then
+    ok "SSL sera configurado para: $DOMAIN_VAL"
+else
+    warn "Sem dominio — deploy apenas em HTTP"
+fi
+echo ""
+
+# ── SMTP ─────────────────────────────────────────────────────────────────────
+if [ -f "$ENV_FILE" ]; then
+    echo -e "${YELLOW}Configuracao existente:${NC} $ENV_FILE"
     read -r -p "  Reconfigurar SMTP? [s/N] " _resp
     echo ""
     if [[ ! "$_resp" =~ ^[Ss]$ ]]; then
@@ -75,37 +125,27 @@ fi
 
 if [ "$SKIP_SMTP" -eq 0 ]; then
     echo -e "${BLUE}Configuracao de e-mail (OTP)${NC}"
-    echo "  O sistema envia codigos de acesso por e-mail."
-    echo "  Para Gmail: use uma App Password (nao a senha da conta)."
-    echo "  Saiba mais: https://myaccount.google.com/apppasswords"
+    echo "  Para Gmail: use uma App Password (myaccount.google.com/apppasswords)"
     echo ""
 
-    # SMTP_USER
     while true; do
-        read -r -p "  E-mail remetente (ex: seu@gmail.com): " SMTP_USER_VAL
+        read -r -p "  E-mail remetente: " SMTP_USER_VAL
         SMTP_USER_VAL="${SMTP_USER_VAL// /}"
-        if [[ "$SMTP_USER_VAL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
-            break
-        fi
+        [[ "$SMTP_USER_VAL" =~ ^[^@]+@[^@]+\.[^@]+$ ]] && break
         warn "E-mail invalido. Tente novamente."
     done
 
-    # SMTP_PASS (oculta)
     while true; do
         read -r -s -p "  Senha / App Password (nao aparece): " SMTP_PASS_VAL
         echo ""
-        if [ -n "$SMTP_PASS_VAL" ]; then
-            break
-        fi
+        [ -n "$SMTP_PASS_VAL" ] && break
         warn "Senha nao pode ser vazia."
     done
 
-    # SMTP_FROM (opcional)
     read -r -p "  Nome do remetente [Trans-Script]: " _from_name
     _from_name="${_from_name:-Trans-Script}"
     SMTP_FROM_VAL="$_from_name <$SMTP_USER_VAL>"
 
-    # SMTP personalizado (opcional)
     read -r -p "  Servidor SMTP [$SMTP_HOST_VAL]: " _host
     SMTP_HOST_VAL="${_host:-$SMTP_HOST_VAL}"
 
@@ -126,118 +166,177 @@ fi
 # =============================================================================
 # 1. Dependencias do sistema
 # =============================================================================
-log "[1/6] Instalando dependencias do sistema..."
+log "[1/6] Dependencias do sistema..."
 
 apt-get update -qq
-
-# Corrigir pacotes quebrados antes de instalar qualquer coisa
 apt-get install -f -y -qq 2>/dev/null || true
 dpkg --configure -a 2>/dev/null || true
 
+# Pacotes base (idempotente — apt pula se ja instalado)
 apt-get install -y \
     python3 python3-venv python3-pip \
-    nginx \
-    rsync \
-    curl \
-    || fail "Falha ao instalar pacotes base (python3/nginx/rsync)"
+    nginx rsync curl \
+    certbot python3-certbot-nginx \
+    2>&1 | grep -E "^(Err|W:|E:|Setting up|Installing)" | sed 's/^/  /' || true
 
-# Node.js: tenta versao do sistema; se muito antiga (<18) instala via NodeSource
+ok "Pacotes base verificados"
+
+# Node.js
 NODE_OK=0
-if command -v node &>/dev/null && [ "$(node -e 'process.exit(parseInt(process.versions.node)<18?1:0)' 2>/dev/null; echo $?)" = "0" ]; then
-    NODE_OK=1
+if command -v node &>/dev/null; then
+    _nver=$(node -e "process.exit(parseInt(process.versions.node)<18?1:0)" 2>/dev/null; echo $?)
+    [ "$_nver" = "0" ] && NODE_OK=1
 fi
-if [ "$NODE_OK" -eq 0 ]; then
-    apt-get install -y nodejs npm 2>/dev/null && NODE_OK=1 || true
+if [ "$NODE_OK" -eq 1 ]; then
+    skip "Node.js $(node -v)"
+else
+    if apt-get install -y nodejs npm 2>/dev/null; then
+        NODE_OK=1
+    else
+        warn "Instalando Node.js 20 via NodeSource..."
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+        apt-get install -y nodejs || fail "Falha ao instalar Node.js"
+    fi
+    ok "Node.js $(node -v) instalado"
 fi
-if [ "$NODE_OK" -eq 0 ]; then
-    warn "Instalando Node.js 20 via NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
-    apt-get install -y nodejs || fail "Falha ao instalar Node.js"
+
+# translate-shell
+if command -v trans &>/dev/null; then
+    skip "translate-shell"
+else
+    apt-get install -y -qq translate-shell 2>/dev/null \
+        || (wget -q -O /usr/local/bin/trans \
+                "https://raw.githubusercontent.com/soimort/translate-shell/gh-pages/trans" \
+            && chmod +x /usr/local/bin/trans \
+            && ok "translate-shell instalado via wget")
 fi
-ok "Node.js $(node -v) / npm $(npm -v)"
 
-# translate-shell: tenta via apt, senao instala manualmente
-apt-get install -y -qq translate-shell 2>/dev/null \
-    || (wget -q -O /usr/local/bin/trans \
-            "https://raw.githubusercontent.com/soimort/translate-shell/gh-pages/trans" \
-        && chmod +x /usr/local/bin/trans \
-        && ok "translate-shell instalado via wget")
-
-# unrar: pacote non-free, opcional (suporte a .rar)
-apt-get install -y -qq unrar 2>/dev/null \
-    || apt-get install -y -qq unrar-free 2>/dev/null \
-    || warn "unrar nao disponivel — arquivos .rar nao serao suportados"
-
-ok "Pacotes instalados"
+# unrar (opcional)
+if command -v unrar &>/dev/null; then
+    skip "unrar"
+else
+    apt-get install -y -qq unrar 2>/dev/null \
+        || apt-get install -y -qq unrar-free 2>/dev/null \
+        || warn "unrar nao disponivel — arquivos .rar nao serao suportados"
+fi
 
 # =============================================================================
 # 2. Copiar projeto para /opt
 # =============================================================================
-log "[2/6] Copiando projeto para $INSTALL_DIR..."
+log "[2/6] Sincronizando projeto em $INSTALL_DIR..."
 
 mkdir -p "$INSTALL_DIR"
 rsync -a --exclude='venv' --exclude='node_modules' --exclude='.git' \
     --exclude='backend/uploads' --exclude='backend/jobs' --exclude='backend/static' \
     "$SCRIPT_DIR/" "$INSTALL_DIR/"
 
-mkdir -p "$INSTALL_DIR/backend/uploads"
-mkdir -p "$INSTALL_DIR/backend/jobs"
-mkdir -p "$INSTALL_DIR/backend/static"
+mkdir -p "$INSTALL_DIR/backend/uploads" \
+         "$INSTALL_DIR/backend/jobs" \
+         "$INSTALL_DIR/backend/static"
 chown -R "$DEPLOY_USER":"$DEPLOY_USER" "$INSTALL_DIR"
 
-ok "Projeto copiado"
+ok "Projeto sincronizado"
 
 # =============================================================================
-# 3. Python virtualenv + dependencias
+# 3. Python virtualenv
 # =============================================================================
-log "[3/6] Configurando ambiente Python..."
+log "[3/6] Ambiente Python..."
 
-sudo -u "$DEPLOY_USER" python3 -m venv "$VENV_DIR"
-sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet \
-    -r "$INSTALL_DIR/backend/requirements.txt"
-
-ok "Virtualenv pronto ($VENV_DIR)"
+if [ -f "$VENV_DIR/bin/gunicorn" ]; then
+    # Virtualenv ja existe — apenas atualiza dependencias
+    skip "virtualenv existente — atualizando dependencias"
+    sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+    sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet \
+        -r "$INSTALL_DIR/backend/requirements.txt"
+    ok "Dependencias Python atualizadas"
+else
+    sudo -u "$DEPLOY_USER" python3 -m venv "$VENV_DIR"
+    sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+    sudo -u "$DEPLOY_USER" "$VENV_DIR/bin/pip" install --quiet \
+        -r "$INSTALL_DIR/backend/requirements.txt"
+    ok "Virtualenv criado em $VENV_DIR"
+fi
 
 # =============================================================================
 # 4. Frontend build
 # =============================================================================
-log "[4/6] Compilando frontend React..."
+log "[4/6] Frontend React..."
 
-cd "$INSTALL_DIR/frontend"
-sudo -u "$DEPLOY_USER" npm install --silent 2>/dev/null
-sudo -u "$DEPLOY_USER" npm run build 2>/dev/null
-cd "$INSTALL_DIR"
+# Rebuild se o codigo-fonte e mais recente que o build
+_src_ts=$(find "$INSTALL_DIR/frontend/src" -newer "$INSTALL_DIR/backend/static/index.html" 2>/dev/null | wc -l || echo 1)
 
-ok "Frontend compilado → backend/static/"
+if [ -f "$INSTALL_DIR/backend/static/index.html" ] && [ "$_src_ts" -eq 0 ]; then
+    skip "frontend ja compilado e atualizado"
+else
+    cd "$INSTALL_DIR/frontend"
+    sudo -u "$DEPLOY_USER" npm install --silent 2>/dev/null
+    sudo -u "$DEPLOY_USER" npm run build 2>/dev/null
+    cd "$INSTALL_DIR"
+    ok "Frontend compilado"
+fi
 
 # =============================================================================
-# 5. Nginx
+# 5. Nginx + SSL
 # =============================================================================
-log "[5/6] Configurando Nginx..."
+log "[5/6] Nginx..."
 
-cp "$INSTALL_DIR/config/nginx.conf" "/etc/nginx/sites-available/$APP_NAME"
-ln -sf "/etc/nginx/sites-available/$APP_NAME" "/etc/nginx/sites-enabled/$APP_NAME"
+NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
+cp "$INSTALL_DIR/config/nginx.conf" "$NGINX_CONF"
+
+if [ -n "$DOMAIN_VAL" ]; then
+    sed -i "s/server_name _;/server_name $DOMAIN_VAL;/" "$NGINX_CONF"
+fi
+
+ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$APP_NAME"
 [ -f /etc/nginx/sites-enabled/default ] && rm -f /etc/nginx/sites-enabled/default
 
 nginx -t > /dev/null 2>&1 || fail "Configuracao Nginx invalida"
 systemctl reload nginx
+ok "Nginx configurado"
 
-ok "Nginx configurado (porta 80)"
+# ── SSL via Certbot ──────────────────────────────────────────────────────────
+if [ -n "$DOMAIN_VAL" ]; then
+    CERT_PATH="/etc/letsencrypt/live/$DOMAIN_VAL/fullchain.pem"
+
+    if [ -f "$CERT_PATH" ]; then
+        # Certificado ja existe — renovar se necessario
+        skip "certificado SSL existente — verificando renovacao"
+        certbot renew --quiet --nginx 2>/dev/null || true
+        ok "Certificado SSL verificado"
+    else
+        log "  Obtendo certificado SSL para $DOMAIN_VAL..."
+
+        if [ "$SKIP_SMTP" -eq 0 ]; then
+            _certbot_email="$SMTP_USER_VAL"
+        else
+            _certbot_email=$(grep "^SMTP_USER" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "admin@$DOMAIN_VAL")
+        fi
+
+        if certbot --nginx \
+            -d "$DOMAIN_VAL" \
+            --non-interactive \
+            --agree-tos \
+            -m "$_certbot_email" \
+            --redirect \
+            2>&1 | sed 's/^/    /'; then
+            ok "SSL ativado — https://$DOMAIN_VAL"
+        else
+            warn "Certbot falhou — verifique se DNS $DOMAIN_VAL aponta para este IP"
+            warn "Para tentar depois: certbot --nginx -d $DOMAIN_VAL"
+        fi
+    fi
+fi
 
 # =============================================================================
 # 6. Arquivo de env + systemd
 # =============================================================================
-log "[6/6] Configurando servico systemd..."
+log "[6/6] Servico systemd..."
 
 mkdir -p "/etc/trans-script-web"
 chmod 700 "/etc/trans-script-web"
 
-# Gerar SECRET_KEY (sempre nova se o arquivo nao existia; manter se existia)
 if [ "$SKIP_SMTP" -eq 0 ]; then
     SECRET_KEY_VAL=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-
-    # Escrever env com permissao restrita (somente root le)
     install -m 600 /dev/null "$ENV_FILE"
     cat > "$ENV_FILE" << EOF
 # Trans-Script Web — variaveis de ambiente
@@ -254,10 +353,11 @@ SMTP_FROM=$SMTP_FROM_VAL
 EOF
     chmod 600 "$ENV_FILE"
     chown root:root "$ENV_FILE"
-    ok "Configuracao salva em $ENV_FILE (chmod 600)"
+    ok "Configuracao salva em $ENV_FILE"
+else
+    skip "env file existente"
 fi
 
-# Escrever unit do systemd
 cat > "/etc/systemd/system/$APP_NAME.service" << UNIT
 [Unit]
 Description=Trans-Script Web — Tradutor PHP EN→PT-BR
@@ -303,9 +403,15 @@ fi
 IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "=================================================="
-echo -e "  ${GREEN}Deploy concluido com sucesso!${NC}"
+echo -e "  ${GREEN}Deploy concluido!${NC}"
 echo ""
-echo "  URL:       http://$IP"
+if [ -n "$DOMAIN_VAL" ] && [ -f "/etc/letsencrypt/live/$DOMAIN_VAL/fullchain.pem" ]; then
+    echo "  URL:       https://$DOMAIN_VAL"
+elif [ -n "$DOMAIN_VAL" ]; then
+    echo "  URL:       http://$DOMAIN_VAL  (SSL pendente)"
+else
+    echo "  URL:       http://$IP"
+fi
 echo "  Env:       $ENV_FILE"
 echo "  Status:    systemctl status $APP_NAME"
 echo "  Logs:      journalctl -u $APP_NAME -f"
