@@ -56,9 +56,19 @@ apt-get install -y -qq \
     python3 python3-venv python3-pip \
     nginx \
     nodejs npm \
-    translate-shell \
-    unrar \
-    > /dev/null 2>&1
+    || fail "Falha ao instalar pacotes base"
+
+# translate-shell: tenta via apt, senao instala manualmente
+apt-get install -y -qq translate-shell 2>/dev/null \
+    || (wget -q -O /usr/local/bin/trans \
+            "https://raw.githubusercontent.com/soimort/translate-shell/gh-pages/trans" \
+        && chmod +x /usr/local/bin/trans \
+        && ok "translate-shell instalado via wget")
+
+# unrar: pacote non-free, opcional (suporte a .rar)
+apt-get install -y -qq unrar 2>/dev/null \
+    || apt-get install -y -qq unrar-free 2>/dev/null \
+    || echo "  ! unrar nao disponivel — arquivos .rar nao serao suportados"
 
 ok "Pacotes instalados"
 
@@ -124,6 +134,31 @@ ok "Nginx configurado (porta 80)"
 # =============================================================================
 log "[6/6] Criando servico systemd..."
 
+# Criar arquivo de env se ainda nao existir
+ENV_FILE="/etc/trans-script-web/env"
+mkdir -p "/etc/trans-script-web"
+if [ ! -f "$ENV_FILE" ]; then
+    GENERATED_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    cat > "$ENV_FILE" << ENV
+# Variaveis de ambiente — Trans-Script Web
+# Edite com: nano $ENV_FILE
+# Depois reinicie: systemctl restart $APP_NAME
+
+SECRET_KEY=$GENERATED_KEY
+
+# SMTP para envio de OTP (obrigatorio para producao)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=Trans-Script <noreply@example.com>
+ENV
+    chmod 600 "$ENV_FILE"
+    ok "Arquivo de env criado: $ENV_FILE  (configure SMTP_USER e SMTP_PASS)"
+else
+    ok "Arquivo de env ja existe: $ENV_FILE"
+fi
+
 cat > "/etc/systemd/system/$APP_NAME.service" << UNIT
 [Unit]
 Description=Trans-Script Web — Tradutor PHP EN→PT-BR
@@ -134,6 +169,7 @@ Type=simple
 User=$DEPLOY_USER
 WorkingDirectory=$INSTALL_DIR
 Environment=PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=$ENV_FILE
 ExecStart=$VENV_DIR/bin/gunicorn \\
     --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker \\
     --workers 1 \\
