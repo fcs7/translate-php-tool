@@ -89,6 +89,11 @@ def get_cached_translation_db(source_text):
                     (source_text,),
                 ).fetchone()
                 if row:
+                    translated = row['translated_text']
+                    # Skip poisoned cache entries (failed translations cached as source==translated)
+                    if translated.strip() == source_text.strip() and len(source_text.strip()) > 3:
+                        log.debug(f'[CACHE] Entrada envenenada ignorada: "{source_text[:50]}"')
+                        return None
                     now = datetime.now().isoformat()
                     conn.execute(
                         "UPDATE translation_cache "
@@ -96,7 +101,7 @@ def get_cached_translation_db(source_text):
                         "WHERE source_text = ?",
                         (now, source_text),
                     )
-                    return row['translated_text']
+                    return translated
     except Exception as e:
         log.debug(f'[CACHE] Erro ao buscar cache: {e}')
     return None
@@ -114,6 +119,7 @@ def save_cached_translation_db(source_text, translated_text):
                         (source_text, translated_text, hit_count, created_at, last_used_at)
                     VALUES (?, ?, 1, ?, ?)
                     ON CONFLICT(source_text) DO UPDATE SET
+                        translated_text = excluded.translated_text,
                         hit_count    = hit_count + 1,
                         last_used_at = excluded.last_used_at
                     """,

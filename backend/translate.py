@@ -12,6 +12,7 @@ Uso:
 """
 
 import argparse
+import logging
 import os
 import platform
 import re
@@ -20,6 +21,8 @@ import subprocess
 import sys
 import time
 from multiprocessing import Manager, Pool, cpu_count
+
+log = logging.getLogger('trans-script')
 
 # === Configuração padrão ===
 SOURCE_LANG = 'en'
@@ -235,14 +238,38 @@ def install_trans():
         sys.exit(1)
 
 
-def ensure_trans():
-    """Garante que o comando 'trans' está disponível."""
-    if shutil.which('trans'):
+def _ensure_gawk():
+    """Garante que gawk esta disponivel (dependencia do translate-shell)."""
+    if shutil.which('gawk'):
         return
-    install_trans()
+    print("gawk nao encontrado (dependencia do translate-shell). Instalando...")
+    pkg_name, _ = detect_pkg_manager()
+    if pkg_name == 'apt':
+        try:
+            subprocess.run(['sudo', 'apt', 'install', '-y', 'gawk'], check=True)
+            print("gawk instalado com sucesso!")
+            return
+        except subprocess.CalledProcessError:
+            pass
+    elif pkg_name:
+        try:
+            cmd = ['sudo', pkg_name, 'install', '-y', 'gawk']
+            subprocess.run(cmd, check=True)
+            print("gawk instalado com sucesso!")
+            return
+        except subprocess.CalledProcessError:
+            pass
+    print("AVISO: gawk nao instalado automaticamente. Instale com: sudo apt install gawk")
+
+
+def ensure_trans():
+    """Garante que o comando 'trans' e suas dependencias estao disponiveis."""
     if not shutil.which('trans'):
-        print("ERRO: 'trans' ainda não encontrado após instalação.")
-        sys.exit(1)
+        install_trans()
+        if not shutil.which('trans'):
+            print("ERRO: 'trans' ainda não encontrado após instalação.")
+            sys.exit(1)
+    _ensure_gawk()
 
 
 # =============================================================================
@@ -301,14 +328,23 @@ def translate_text(text, delay):
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+                translated = result.stdout.strip()
+                log.debug(f'[TRANS] "{text[:40]}" -> "{translated[:40]}"')
+                return translated
+            # Log failure details
+            stderr = result.stderr.strip() if result.stderr else ''
+            log.warning(f'[TRANS] Falha (tentativa {attempt + 1}/2, rc={result.returncode}): '
+                        f'"{text[:60]}"{f" stderr={stderr[:100]}" if stderr else ""}')
         except subprocess.TimeoutExpired:
-            pass
+            log.warning(f'[TRANS] Timeout (tentativa {attempt + 1}/2): "{text[:60]}"')
+        except FileNotFoundError:
+            log.error('[TRANS] Comando "trans" nao encontrado no sistema')
+            return text
 
         if attempt == 0:
             time.sleep(2)
 
-    print(f"  AVISO: falha na tradução, mantendo original: {text[:60]}")
+    log.warning(f'[TRANS] Falha apos 2 tentativas, mantendo original: "{text[:60]}"')
     return text
 
 

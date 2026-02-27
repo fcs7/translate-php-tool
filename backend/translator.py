@@ -43,7 +43,7 @@ class TranslationJob:
         self.translated_strings = 0
         self.errors = []
         self.validation = None
-        self.output_zip = None
+        self.output_tar = None
 
         # Timestamps
         self.created_at = datetime.now().isoformat()
@@ -67,7 +67,7 @@ class TranslationJob:
             'created_at': self.created_at,
             'started_at': self.started_at,
             'finished_at': self.finished_at,
-            'has_output': self.output_zip is not None,
+            'has_output': self.output_tar is not None,
             'validation': self.validation,
             'user_email': self.user_email,
         }
@@ -158,17 +158,56 @@ def _extract_archive(archive_path, extract_to):
     return extract_to
 
 
-def _create_zip(source_dir, zip_path):
-    """Compacta diretorio de saida em ZIP."""
+def _create_tar(source_dir, tar_path):
+    """Compacta diretorio de saida em TAR.GZ."""
     file_count = 0
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+    with tarfile.open(tar_path, 'w:gz') as tf:
         for dirpath, _, filenames in os.walk(source_dir):
             for fname in filenames:
                 full = os.path.join(dirpath, fname)
-                zf.write(full, os.path.relpath(full, source_dir))
+                tf.add(full, arcname=os.path.relpath(full, source_dir))
                 file_count += 1
-    size_kb = os.path.getsize(zip_path) / 1024
-    log.info(f'ZIP criado: {file_count} arquivos, {size_kb:.1f} KB')
+    size_kb = os.path.getsize(tar_path) / 1024
+    log.info(f'TAR criado: {file_count} arquivos, {size_kb:.1f} KB')
+
+
+def _detect_version(input_dir):
+    """Detecta versao do software a partir dos arquivos PHP."""
+    import re as _re
+    version_patterns = [
+        _re.compile(r"""\$version\s*=\s*['"]([0-9]+\.[0-9]+(?:\.[0-9]+)?)['"]""", _re.IGNORECASE),
+        _re.compile(r"""@version\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)"""),
+        _re.compile(r"""Version:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)"""),
+    ]
+    for dirpath, _, filenames in os.walk(input_dir):
+        for fname in sorted(filenames):
+            if not fname.endswith('.php'):
+                continue
+            filepath = os.path.join(dirpath, fname)
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read(8192)
+                for pattern in version_patterns:
+                    m = pattern.search(content)
+                    if m:
+                        return m.group(1)
+            except Exception:
+                continue
+    return '1.0.0'
+
+
+def _create_meta_file(meta_path, input_dir):
+    """Cria arquivo meta com informacoes do language pack."""
+    version = _detect_version(input_dir)
+    content = (
+        f'ISO: pt_br\n'
+        f'Language: Portuguese\n'
+        f'Charset: UTF-8\n'
+        f'Version: {version}\n'
+    )
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    log.info(f'Meta criado: Version={version}')
 
 
 # ============================================================================
@@ -228,6 +267,9 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
 
     mode = 'a' if start_line > 0 else 'w'
     count = 0
+    cached_count = 0
+    fresh_count = 0
+    failed_count = 0
 
     try:
         with open(dst_path, mode, encoding='utf-8') as out:
@@ -260,9 +302,17 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
                     was_cached = text in cache
                     translated = trans_engine.get_cached_translation(text, delay, cache)
 
-                    # Persiste no SQLite se foi uma nova traducao
-                    if not was_cached:
+                    # Persiste no SQLite se foi uma nova traducao (e nao falhou)
+                    if not was_cached and text.strip() != translated.strip():
                         save_cached_translation_db(text, translated)
+
+                    # Contadores de diagnostico
+                    if was_cached:
+                        cached_count += 1
+                    elif text.strip() != translated.strip():
+                        fresh_count += 1
+                    else:
+                        failed_count += 1
 
                     translated = trans_engine.restore_placeholders(translated, ph_map)
                     translated = trans_engine.re_escape(translated, qc)
@@ -284,7 +334,8 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
         log.error(f'[{job.job_id}] Erro em {rel} linha {i}: {e}')
         job.errors.append(f"Erro: {rel}: {e}")
 
-    log.info(f'[{job.job_id}] {rel}: {count} strings traduzidas')
+    log.info(f'[{job.job_id}] {rel}: {count} strings '
+             f'({cached_count} cache, {fresh_count} traduzidas, {failed_count} falhas)')
     return count
 
 
@@ -302,6 +353,8 @@ def _run(job, socketio):
     try:
         log.debug(f'[{job.job_id}] Verificando translate-shell...')
         trans_engine.ensure_trans()
+        trans_path = shutil.which('trans')
+        log.info(f'[{job.job_id}] trans binary: {trans_path or "NAO ENCONTRADO"}')
 
         # Coletar arquivos PHP
         tasks = []
@@ -362,11 +415,26 @@ def _run(job, socketio):
             log.error(f'[{job.job_id}] Erro na validacao: {e}')
             job.validation = {'error': str(e)}
 
-        # ZIP de saida
-        zip_path = os.path.join(JOBS_FOLDER, job.job_id, 'output.zip')
-        log.info(f'[{job.job_id}] Criando ZIP de saida...')
-        _create_zip(job.output_dir, zip_path)
-        job.output_zip = zip_path
+        # Montar estrutura language/meta + language/pt_br/
+        job_dir = os.path.join(JOBS_FOLDER, job.job_id)
+        package_dir = os.path.join(job_dir, 'package')
+        lang_dir = os.path.join(package_dir, 'language')
+        pt_br_dir = os.path.join(lang_dir, 'pt_br')
+
+        os.makedirs(lang_dir, exist_ok=True)
+        shutil.copytree(job.output_dir, pt_br_dir, dirs_exist_ok=True)
+
+        log.info(f'[{job.job_id}] Criando arquivo meta...')
+        _create_meta_file(os.path.join(lang_dir, 'meta'), job.input_dir)
+
+        # TAR de saida
+        tar_path = os.path.join(job_dir, 'output.tar.gz')
+        log.info(f'[{job.job_id}] Criando TAR de saida...')
+        _create_tar(package_dir, tar_path)
+        job.output_tar = tar_path
+
+        # Limpar diretorio temporario de empacotamento
+        shutil.rmtree(package_dir, ignore_errors=True)
 
         job.status = 'completed'
         job.finished_at = datetime.now().isoformat()
