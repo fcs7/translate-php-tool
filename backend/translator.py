@@ -14,13 +14,19 @@ import uuid
 import threading
 from datetime import datetime
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import backend.translate as trans_engine
 
 from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
 from backend.engine import get_engine
 from backend.auth import save_job_db, get_jobs_db, get_job_db, delete_job_db, update_storage_used
 
-BATCH_SIZE = 50
+BATCH_SIZE = 100
+MAX_PARALLEL_FILES = 4
+
+# Lock para proteger estado compartilhado do job durante traducao paralela
+_progress_lock = threading.Lock()
 
 
 # ============================================================================
@@ -253,7 +259,8 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
             src_lines = f.readlines()
     except Exception as e:
         log.error(f'[{job.job_id}] Erro ao ler {rel}: {e}')
-        job.errors.append(f"Erro leitura: {rel}: {e}")
+        with _progress_lock:
+            job.errors.append(f"Erro leitura: {rel}: {e}")
         return 0
 
     total_lines = len(src_lines)
@@ -319,18 +326,21 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
                 translated = trans_engine.re_escape(translated, qc)
                 output_lines[idx] = prefix + translated + suffix + '\n'
                 count += 1
-                job.translated_strings += 1
+                with _progress_lock:
+                    job.translated_strings += 1
 
             # Progresso via WebSocket a cada batch
             if socketio and job.total_strings > 0:
-                job.progress = int((job.translated_strings / job.total_strings) * 100)
+                with _progress_lock:
+                    job.progress = int((job.translated_strings / job.total_strings) * 100)
                 socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
 
             time.sleep(delay)
 
     except Exception as e:
         log.error(f'[{job.job_id}] Erro em {rel} batch: {e}')
-        job.errors.append(f"Erro: {rel}: {e}")
+        with _progress_lock:
+            job.errors.append(f"Erro: {rel}: {e}")
 
     # --- Pass 3: escrever arquivo ---
     try:
@@ -341,7 +351,8 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
             out.flush()
     except Exception as e:
         log.error(f'[{job.job_id}] Erro ao escrever {rel}: {e}')
-        job.errors.append(f"Erro escrita: {rel}: {e}")
+        with _progress_lock:
+            job.errors.append(f"Erro escrita: {rel}: {e}")
 
     log.info(f'[{job.job_id}] {rel}: {count} strings traduzidas (batch)')
     return count
@@ -388,21 +399,43 @@ def _run(job, socketio):
             socketio.emit('translation_error', job.to_dict(), room=job.job_id)
             return
 
-        for idx, (src, dst, rel, _) in enumerate(tasks):
-            if job._cancel_flag:
+        # Traducao paralela de arquivos (MAX_PARALLEL_FILES workers)
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FILES) as pool:
+            futures = {}
+            for idx, (src, dst, rel, _) in enumerate(tasks):
+                if job._cancel_flag:
+                    break
+                future = pool.submit(_translate_file, src, dst, job.delay, job, socketio)
+                futures[future] = (idx, rel)
+
+            cancelled = False
+            for future in as_completed(futures):
+                idx, rel = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    log.error(f'[{job.job_id}] Erro thread {rel}: {e}')
+                    with _progress_lock:
+                        job.errors.append(f"Erro thread: {rel}: {e}")
+
+                with _progress_lock:
+                    job.files_done += 1
+                    job.current_file = rel
+                    if job.total_strings > 0:
+                        job.progress = int((job.translated_strings / job.total_strings) * 100)
+                socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
+
+                if job._cancel_flag:
+                    cancelled = True
+                    break
+
+            if cancelled:
                 job.status = 'cancelled'
                 job.finished_at = datetime.now().isoformat()
-                log.info(f'[{job.job_id}] Cancelado pelo usuario ({idx}/{job.total_files} arquivos)')
+                log.info(f'[{job.job_id}] Cancelado pelo usuario ({job.files_done}/{job.total_files} arquivos)')
                 save_job_db(job.to_dict())
                 socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
                 return
-
-            job.current_file = rel
-            job.files_done = idx
-            log.info(f'[{job.job_id}] [{idx + 1}/{job.total_files}] Traduzindo: {rel}')
-            socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
-
-            _translate_file(src, dst, job.delay, job, socketio)
 
         # Finalizar
         job.files_done = job.total_files
