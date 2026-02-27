@@ -348,29 +348,21 @@ export default function LoginPage({ onSuccess }) {
               )}
             </button>
 
-            <div className="space-y-2 pt-1">
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={() => switchMode('register')}
-                  className="text-sm text-gray-500 hover:text-accent-400 transition-colors"
-                >
-                  Nao tem conta? <span className="text-accent-400 font-medium">Cadastre-se</span>
-                </button>
-              </div>
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={() => switchMode('otp-request')}
-                  className="text-xs text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1.5 mx-auto"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                    <polyline points="22,6 12,13 2,6" />
-                  </svg>
-                  Entrar com codigo por e-mail
-                </button>
-              </div>
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={() => switchMode('otp-request')}
+                className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+              >
+                Esqueci a senha
+              </button>
+              <button
+                type="button"
+                onClick={() => switchMode('register')}
+                className="text-sm text-gray-500 hover:text-accent-400 transition-colors"
+              >
+                <span className="text-accent-400 font-medium">Cadastre-se</span>
+              </button>
             </div>
           </form>
         )}
@@ -446,8 +438,8 @@ export default function LoginPage({ onSuccess }) {
                 </svg>
                 Voltar
               </button>
-              <h1 className="text-xl font-semibold text-gradient">Entrar com codigo</h1>
-              <p className="text-sm text-gray-500 mt-1">Enviaremos um codigo para seu e-mail</p>
+              <h1 className="text-xl font-semibold text-gradient">Esqueci a senha</h1>
+              <p className="text-sm text-gray-500 mt-1">Enviaremos um codigo para acessar sua conta</p>
             </div>
 
             <EmailInput />
