@@ -177,6 +177,7 @@ apt-get install -y \
     python3 python3-venv python3-pip \
     nginx rsync curl \
     certbot python3-certbot-nginx \
+    gawk \
     2>&1 | grep -E "^(Err|W:|E:|Setting up|Installing)" | sed 's/^/  /' || true
 
 ok "Pacotes base verificados"
