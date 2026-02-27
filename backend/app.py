@@ -258,14 +258,14 @@ def download_job(job_id):
         return jsonify({'error': 'Job nao encontrado'}), 404
     if job.user_email != session['user_email']:
         return jsonify({'error': 'Acesso negado'}), 403
-    if job.status != 'completed' or not job.output_zip:
+    if job.status != 'completed' or not job.output_tar:
         return jsonify({'error': 'Traducao ainda nao concluida'}), 400
     log.info(f'{request.remote_addr} download: {job_id}')
     return send_file(
-        job.output_zip,
-        mimetype='application/zip',
+        job.output_tar,
+        mimetype='application/gzip',
         as_attachment=True,
-        download_name=f'traducao_{job_id}.zip',
+        download_name=f'traducao_{job_id}.tar.gz',
     )
 
 
