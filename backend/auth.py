@@ -92,6 +92,7 @@ def get_cached_translation_db(source_text):
                     translated = row['translated_text']
                     # Skip poisoned cache entries (failed translations cached as source==translated)
                     if translated.strip() == source_text.strip() and len(source_text.strip()) > 3:
+                        log.debug(f'[CACHE] Entrada envenenada ignorada: "{source_text[:50]}"')
                         return None
                     now = datetime.now().isoformat()
                     conn.execute(

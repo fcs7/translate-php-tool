@@ -267,6 +267,9 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
 
     mode = 'a' if start_line > 0 else 'w'
     count = 0
+    cached_count = 0
+    fresh_count = 0
+    failed_count = 0
 
     try:
         with open(dst_path, mode, encoding='utf-8') as out:
@@ -303,6 +306,14 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
                     if not was_cached and text.strip() != translated.strip():
                         save_cached_translation_db(text, translated)
 
+                    # Contadores de diagnostico
+                    if was_cached:
+                        cached_count += 1
+                    elif text.strip() != translated.strip():
+                        fresh_count += 1
+                    else:
+                        failed_count += 1
+
                     translated = trans_engine.restore_placeholders(translated, ph_map)
                     translated = trans_engine.re_escape(translated, qc)
 
@@ -323,7 +334,8 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
         log.error(f'[{job.job_id}] Erro em {rel} linha {i}: {e}')
         job.errors.append(f"Erro: {rel}: {e}")
 
-    log.info(f'[{job.job_id}] {rel}: {count} strings traduzidas')
+    log.info(f'[{job.job_id}] {rel}: {count} strings '
+             f'({cached_count} cache, {fresh_count} traduzidas, {failed_count} falhas)')
     return count
 
 
@@ -341,6 +353,8 @@ def _run(job, socketio):
     try:
         log.debug(f'[{job.job_id}] Verificando translate-shell...')
         trans_engine.ensure_trans()
+        trans_path = shutil.which('trans')
+        log.info(f'[{job.job_id}] trans binary: {trans_path or "NAO ENCONTRADO"}')
 
         # Coletar arquivos PHP
         tasks = []
