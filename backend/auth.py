@@ -38,6 +38,9 @@ def _db_conn():
         conn.close()
 
 
+JOB_EXPIRY_DAYS = 7
+
+
 def init_db():
     """Cria tabelas SQLite se nao existirem."""
     with _db_conn() as conn:
@@ -56,6 +59,35 @@ def init_db():
                 created_at       TEXT    NOT NULL,
                 last_used_at     TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS activity_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email  TEXT    NOT NULL,
+                action      TEXT    NOT NULL,
+                details     TEXT,
+                ip_address  TEXT,
+                created_at  TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS job_history (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id             TEXT    NOT NULL,
+                user_email         TEXT    NOT NULL,
+                status             TEXT    NOT NULL,
+                total_files        INTEGER DEFAULT 0,
+                total_strings      INTEGER DEFAULT 0,
+                translated_strings INTEGER DEFAULT 0,
+                created_at         TEXT    NOT NULL,
+                started_at         TEXT,
+                finished_at        TEXT,
+                expires_at         TEXT    NOT NULL,
+                file_available     INTEGER DEFAULT 1
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_activity_email ON activity_log(user_email);
+            CREATE INDEX IF NOT EXISTS idx_activity_date ON activity_log(created_at);
+            CREATE INDEX IF NOT EXISTS idx_job_history_email ON job_history(user_email);
+            CREATE INDEX IF NOT EXISTS idx_job_history_expires ON job_history(expires_at);
         """)
         # Migracao: adicionar coluna password_hash se nao existir
         try:
@@ -280,6 +312,140 @@ def clear_untranslated_cache():
     except Exception as e:
         log.error(f'[CACHE] Erro ao limpar cache: {e}')
         return 0
+
+
+# ============================================================================
+# Activity Log — registro de acoes por usuario
+# ============================================================================
+
+def log_activity(user_email, action, details=None, ip_address=None):
+    """Registra acao do usuario no log de atividades."""
+    now = datetime.now().isoformat()
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute(
+                    "INSERT INTO activity_log (user_email, action, details, ip_address, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (user_email, action, details, ip_address, now),
+                )
+    except Exception as e:
+        log.debug(f'[ACTIVITY] Erro ao registrar atividade: {e}')
+
+
+def get_user_activity(user_email, limit=50, offset=0):
+    """Retorna historico de atividades de um usuario."""
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT action, details, ip_address, created_at FROM activity_log "
+            "WHERE user_email = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (user_email, limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_activity(limit=100, offset=0):
+    """Retorna historico de atividades de todos os usuarios (admin)."""
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_email, action, details, ip_address, created_at FROM activity_log "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ============================================================================
+# Job History — historico persistente de jobs
+# ============================================================================
+
+def save_job_history(job_dict):
+    """Salva job finalizado no historico. Expira em JOB_EXPIRY_DAYS dias."""
+    from datetime import timedelta
+    now = datetime.now()
+    expires = (now + timedelta(days=JOB_EXPIRY_DAYS)).isoformat()
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO job_history
+                    (job_id, user_email, status, total_files, total_strings,
+                     translated_strings, created_at, started_at, finished_at,
+                     expires_at, file_available)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                    (
+                        job_dict['job_id'], job_dict['user_email'], job_dict['status'],
+                        job_dict.get('total_files', 0), job_dict.get('total_strings', 0),
+                        job_dict.get('translated_strings', 0), job_dict.get('created_at', ''),
+                        job_dict.get('started_at'), job_dict.get('finished_at'),
+                        expires,
+                    ),
+                )
+    except Exception as e:
+        log.debug(f'[JOB_HISTORY] Erro ao salvar: {e}')
+
+
+def get_user_job_history(user_email, limit=50):
+    """Retorna historico de jobs de um usuario."""
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT job_id, status, total_files, total_strings, translated_strings, "
+            "created_at, started_at, finished_at, expires_at, file_available "
+            "FROM job_history WHERE user_email = ? ORDER BY created_at DESC LIMIT ?",
+            (user_email, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_job_history(limit=100):
+    """Retorna historico de jobs de todos os usuarios (admin)."""
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT job_id, user_email, status, total_files, total_strings, "
+            "translated_strings, created_at, started_at, finished_at, "
+            "expires_at, file_available "
+            "FROM job_history ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def cleanup_expired_jobs():
+    """Marca jobs expirados como file_available=0 e retorna job_ids para limpeza de arquivos."""
+    now = datetime.now().isoformat()
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                rows = conn.execute(
+                    "SELECT job_id FROM job_history "
+                    "WHERE file_available = 1 AND expires_at < ?",
+                    (now,),
+                ).fetchall()
+                expired_ids = [r['job_id'] for r in rows]
+                if expired_ids:
+                    conn.execute(
+                        "UPDATE job_history SET file_available = 0 WHERE file_available = 1 AND expires_at < ?",
+                        (now,),
+                    )
+                    log.info(f'[JOB_HISTORY] {len(expired_ids)} jobs expirados marcados')
+                return expired_ids
+    except Exception as e:
+        log.error(f'[JOB_HISTORY] Erro ao limpar expirados: {e}')
+        return []
+
+
+def delete_user_account(user_id):
+    """Deleta conta de usuario e seus dados associados. Retorna email ou None."""
+    with _db_conn() as conn:
+        row = conn.execute("SELECT email, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            return None
+        email = row['email']
+        conn.execute("DELETE FROM activity_log WHERE user_email = ?", (email,))
+        conn.execute("DELETE FROM job_history WHERE user_email = ?", (email,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        log.info(f'[AUTH] Conta deletada: {email}')
+        return email
 
 
 # ============================================================================

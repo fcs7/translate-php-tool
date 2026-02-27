@@ -140,6 +140,89 @@ export function getDownloadUrl(jobId) {
   return `${API_BASE}/jobs/${jobId}/download`
 }
 
+// ─── Historico do usuario ────────────────────────────────────────────────────
+
+export async function getHistory() {
+  const res = await fetch(`${API_BASE}/history`, { credentials: 'include' })
+  if (!res.ok) throw new Error('Erro ao carregar historico')
+  return res.json()
+}
+
+export async function getActivity(limit = 50) {
+  const res = await fetch(`${API_BASE}/activity?limit=${limit}`, { credentials: 'include' })
+  if (!res.ok) throw new Error('Erro ao carregar atividades')
+  return res.json()
+}
+
+// ─── Admin ──────────────────────────────────────────────────────────────────
+
+export async function adminGetUsers(token) {
+  const res = await fetch(`${API_BASE}/admin/users`, {
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error('Erro ao carregar usuarios')
+  return res.json()
+}
+
+export async function adminGetStats(token) {
+  const res = await fetch(`${API_BASE}/admin/stats`, {
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error('Erro ao carregar estatisticas')
+  return res.json()
+}
+
+export async function adminGetActivity(token, limit = 100) {
+  const res = await fetch(`${API_BASE}/admin/activity?limit=${limit}`, {
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error('Erro ao carregar atividades')
+  return res.json()
+}
+
+export async function adminGetJobHistory(token, limit = 100) {
+  const res = await fetch(`${API_BASE}/admin/job-history?limit=${limit}`, {
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error('Erro ao carregar historico')
+  return res.json()
+}
+
+export async function adminToggleAdmin(token, userId) {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}/toggle-admin`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return res.json()
+}
+
+export async function adminDeleteUser(token, userId) {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return res.json()
+}
+
+export async function adminLogin(token) {
+  const res = await fetch(`${API_BASE}/admin/login`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) {
+    const data = await res.json()
+    throw new Error(data.error || 'Acesso negado')
+  }
+  return res.json()
+}
+
 // ─── Cache ───────────────────────────────────────────────────────────────────
 
 export async function clearUntranslatedCache() {

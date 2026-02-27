@@ -26,6 +26,9 @@ from backend.auth import (
     generate_otp, verify_otp, send_otp_email,
     register_user, login_user,
     clear_untranslated_cache,
+    log_activity, get_user_activity, get_all_activity,
+    save_job_history, get_user_job_history, get_all_job_history,
+    cleanup_expired_jobs, delete_user_account,
 )
 from backend.admin_auth import (
     init_admin_db, create_admin_session, validate_admin_session,
@@ -186,6 +189,7 @@ def auth_register():
     user['is_admin'] = is_admin(email)
     session['user_email'] = email
     session.permanent = True
+    log_activity(email, 'register', ip_address=request.remote_addr)
     log.info(f'[AUTH] Registro: {email}')
     return jsonify({'user': user}), 201
 
@@ -204,6 +208,7 @@ def auth_login():
     user['is_admin'] = is_admin(email)
     session['user_email'] = email
     session.permanent = True
+    log_activity(email, 'login', ip_address=request.remote_addr)
     log.info(f'[AUTH] Login senha: {email}')
     return jsonify({'user': user}), 200
 
@@ -265,6 +270,7 @@ def auth_verify_otp():
     user['is_admin'] = is_admin(email)
     session['user_email'] = email
     session.permanent = True
+    log_activity(email, 'login_otp', 'Recuperacao via codigo', ip_address=request.remote_addr)
     log.info(f'[AUTH] Login via recuperacao OTP: {email}')
     return jsonify({'user': user}), 200
 
@@ -273,7 +279,7 @@ def auth_verify_otp():
 def auth_logout():
     email = session.pop('user_email', None)
     if email:
-        # Revogar sessoes admin ao fazer logout geral
+        log_activity(email, 'logout', ip_address=request.remote_addr)
         if is_admin(email):
             revoke_all_admin_sessions(email)
         log.info(f'[AUTH] Logout: {email}')
@@ -360,6 +366,7 @@ def upload_file():
             log.info(f'{ip} upload: {len(raw_files)} arquivos PHP ({total_size / 1024:.1f} KB)')
 
             job_id = start_translation_raw(tmp_dir, delay, socketio, user_email=session['user_email'])
+            log_activity(session['user_email'], 'upload', f'{len(raw_files)} arquivos PHP, job {job_id}', ip)
             log.info(f'{ip} job criado: {job_id} (delay={delay}s, {len(raw_files)} arquivos PHP)')
             return jsonify({'job_id': job_id}), 201
 
@@ -391,6 +398,7 @@ def upload_file():
     try:
         job_id = start_translation(filepath, delay, socketio, user_email=session['user_email'])
         os.remove(filepath)
+        log_activity(session['user_email'], 'upload', f'Arquivo compactado, job {job_id}', ip)
         log.info(f'{ip} job criado: {job_id} (delay={delay}s)')
         return jsonify({'job_id': job_id}), 201
     except Exception as e:
@@ -431,6 +439,7 @@ def download_job(job_id):
         return jsonify({'error': 'Acesso negado'}), 403
     if job.status != 'completed' or not job.output_zip:
         return jsonify({'error': 'Traducao ainda nao concluida'}), 400
+    log_activity(session['user_email'], 'download', f'Job {job_id}', request.remote_addr)
     log.info(f'{request.remote_addr} download: {job_id}')
     return send_file(
         job.output_zip,
@@ -451,6 +460,7 @@ def remove_job(job_id):
     if job.user_email != session['user_email']:
         return jsonify({'error': 'Acesso negado'}), 403
     delete_job(job_id)
+    log_activity(session['user_email'], 'delete_job', f'Job {job_id}', request.remote_addr)
     log.info(f'{request.remote_addr} deletou job: {job_id}')
     return jsonify({'message': 'Job removido'})
 
@@ -468,6 +478,7 @@ def cancel_job(job_id):
     if job.status != 'running':
         return jsonify({'error': 'Job nao esta em execucao'}), 400
     job.cancel()
+    log_activity(session['user_email'], 'cancel_job', f'Job {job_id}', request.remote_addr)
     log.info(f'{request.remote_addr} cancelou job: {job_id}')
     return jsonify({'message': 'Cancelamento solicitado'})
 
@@ -645,6 +656,81 @@ def admin_stats():
     return jsonify(stats)
 
 
+@app.route('/api/admin/activity')
+@admin_required
+def admin_activity():
+    """Log de atividades global (admin)."""
+    limit = min(int(request.args.get('limit', 100)), 500)
+    offset = int(request.args.get('offset', 0))
+    return jsonify(get_all_activity(limit, offset))
+
+
+@app.route('/api/admin/users/<int:user_id>/activity')
+@admin_required
+def admin_user_activity(user_id):
+    """Log de atividades de um usuario especifico."""
+    row = get_user_by_id(user_id)
+    if not row:
+        return jsonify({'error': 'Usuario nao encontrado'}), 404
+    limit = min(int(request.args.get('limit', 50)), 200)
+    return jsonify(get_user_activity(row['email'], limit))
+
+
+@app.route('/api/admin/users/<int:user_id>/history')
+@admin_required
+def admin_user_history(user_id):
+    """Historico de jobs de um usuario especifico."""
+    row = get_user_by_id(user_id)
+    if not row:
+        return jsonify({'error': 'Usuario nao encontrado'}), 404
+    return jsonify(get_user_job_history(row['email']))
+
+
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@admin_required
+def admin_delete_user(user_id):
+    """Deleta conta de usuario."""
+    row = get_user_by_id(user_id)
+    if not row:
+        return jsonify({'error': 'Usuario nao encontrado'}), 404
+    if row['is_admin']:
+        current_admins = list_admins()
+        if len(current_admins) <= 1:
+            return jsonify({'error': 'Impossivel deletar o ultimo admin'}), 400
+    email = delete_user_account(user_id)
+    if email:
+        revoke_all_admin_sessions(email)
+        log_activity(request.admin_email, 'admin_delete_user', f'Deletou {email}', request.remote_addr)
+    return jsonify({'message': f'Conta {email} deletada'})
+
+
+@app.route('/api/admin/job-history')
+@admin_required
+def admin_all_job_history():
+    """Historico de todos os jobs (persistente)."""
+    limit = min(int(request.args.get('limit', 100)), 500)
+    return jsonify(get_all_job_history(limit))
+
+
+# ============================================================================
+# Historico do usuario (area do cliente)
+# ============================================================================
+
+@app.route('/api/history')
+@login_required
+def user_history():
+    """Retorna historico de jobs do usuario logado."""
+    return jsonify(get_user_job_history(session['user_email']))
+
+
+@app.route('/api/activity')
+@login_required
+def user_activity():
+    """Retorna log de atividades do usuario logado."""
+    limit = min(int(request.args.get('limit', 50)), 200)
+    return jsonify(get_user_activity(session['user_email'], limit))
+
+
 # ============================================================================
 # WebSocket
 # ============================================================================
@@ -707,7 +793,10 @@ def serve_static(path):
 # ============================================================================
 
 if __name__ == '__main__':
-    cleanup_old_jobs()
+    cleanup_old_jobs(max_age_hours=168)  # 7 dias
     cleanup_expired_sessions()
+    # Limpar arquivos de jobs expirados (7 dias)
+    for _expired_id in cleanup_expired_jobs():
+        delete_job(_expired_id)
     log.info('Servidor iniciando em http://localhost:5000')
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)

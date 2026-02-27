@@ -2,7 +2,9 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import Header from './components/Header'
 import FileUpload from './components/FileUpload'
 import TranslationProgress from './components/TranslationProgress'
+import UserHistory from './components/UserHistory'
 import LoginPage from './pages/LoginPage'
+import AdminPanel from './pages/AdminPanel'
 import { useSocket } from './hooks/useSocket'
 import { useAuth } from './hooks/useAuth'
 import { uploadZip, uploadFiles, cancelJob, deleteJob, getJobs, getJobStatus, clearUntranslatedCache } from './services/api'
@@ -11,6 +13,7 @@ export default function App() {
   const { user, loading, isAuthenticated, logout, refetch } = useAuth()
   const [currentJobId, setCurrentJobId] = useState(null)
   const [cacheMsg, setCacheMsg] = useState(null)
+  const [page, setPage] = useState('main') // 'main' | 'history' | 'admin'
   const { jobData, setJobData, connected, joinJob } = useSocket()
   const hasRestoredRef = useRef(false)
 
@@ -127,98 +130,118 @@ export default function App() {
       {/* Decorative background orbs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="orb w-96 h-96 bg-accent-500 -top-48 -left-48" />
-        <div className="orb w-80 h-80 bg-glow-cyan top-1/2 -right-40" style={{ animationDelay: '4s' }} />
-        <div className="orb w-64 h-64 bg-glow-purple bottom-0 left-1/3" style={{ animationDelay: '2s' }} />
+        <div className="orb w-80 h-80 bg-accent-400 top-1/2 -right-40" style={{ animationDelay: '4s' }} />
+        <div className="orb w-64 h-64 bg-glow-gold bottom-0 left-1/3" style={{ animationDelay: '2s' }} />
       </div>
 
-      <Header user={user} onLogout={logout} />
+      <Header
+        user={user}
+        onLogout={logout}
+        onHistory={() => setPage('history')}
+        onAdmin={() => setPage('admin')}
+      />
 
       <main className="flex-1 flex items-start justify-center p-6 relative z-10">
         <div className="w-full max-w-xl space-y-6 mt-8 fade-in">
 
-          {/* Card principal */}
-          <div className="glass rounded-2xl p-6 shadow-2xl slide-up">
-            <div className="mb-6">
-              <h2 className="text-lg font-semibold text-gradient flex items-center gap-2">
-                {showUpload ? (
-                  <>
-                    <svg className="w-5 h-5 text-accent-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="17 8 12 3 7 8" />
-                      <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
-                    Enviar arquivos
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5 text-accent-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="12" y1="20" x2="12" y2="10" />
-                      <line x1="18" y1="20" x2="18" y2="4" />
-                      <line x1="6" y1="20" x2="6" y2="16" />
-                    </svg>
-                    Progresso
-                  </>
-                )}
-              </h2>
-              <p className="text-sm text-gray-400 mt-1">
-                {showUpload
-                  ? 'Envie seus arquivos PHP para traduzir'
-                  : 'Acompanhe a traducao em tempo real'
-                }
-              </p>
-            </div>
-
-            {showUpload && (
-              <FileUpload onUpload={handleUpload} disabled={false} />
-            )}
-
-            {showProgress && (
-              <TranslationProgress
-                job={jobData}
-                onCancel={handleCancel}
-                onDelete={handleDelete}
-                onNewTranslation={handleNewTranslation}
-              />
-            )}
-
-            {/* Esperando primeiro status */}
-            {currentJobId && !jobData && (
-              <div className="text-center py-8">
-                <div className="inline-block shimmer w-6 h-6 border-2 border-accent-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-gray-400 text-sm mt-3">Carregando...</p>
-              </div>
-            )}
-          </div>
-
-          {/* Limpar cache de traducoes falhadas */}
-          {showUpload && (
-            <div className="flex flex-col items-center gap-2">
-              <button
-                onClick={handleClearCache}
-                className="glass-light text-xs text-gray-500 hover:text-gray-300 px-4 py-2 rounded-lg transition-all
-                           inline-flex items-center gap-2"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                </svg>
-                Limpar cache de traducoes falhadas
-              </button>
-              {cacheMsg && (
-                <p className={`text-xs ${cacheMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
-                  {cacheMsg.text}
-                </p>
-              )}
+          {/* ── Historico ─────────────────────────────────── */}
+          {page === 'history' && (
+            <div className="glass rounded-2xl p-6 shadow-2xl slide-up">
+              <UserHistory onBack={() => setPage('main')} />
             </div>
           )}
 
-          {/* Status da conexao */}
-          <div className="flex justify-center">
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <div className={`status-pulse w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
-              {connected ? 'Conectado' : 'Desconectado'}
+          {/* ── Admin ─────────────────────────────────────── */}
+          {page === 'admin' && (
+            <div className="glass rounded-2xl p-6 shadow-2xl slide-up">
+              <AdminPanel onBack={() => setPage('main')} />
             </div>
-          </div>
+          )}
+
+          {/* ── Traducao (pagina principal) ────────────────── */}
+          {page === 'main' && (
+            <>
+              <div className="glass rounded-2xl p-6 shadow-2xl slide-up">
+                <div className="mb-6">
+                  <h2 className="text-lg font-semibold text-gradient flex items-center gap-2">
+                    {showUpload ? (
+                      <>
+                        <svg className="w-5 h-5 text-accent-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        Enviar arquivos
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5 text-accent-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="12" y1="20" x2="12" y2="10" />
+                          <line x1="18" y1="20" x2="18" y2="4" />
+                          <line x1="6" y1="20" x2="6" y2="16" />
+                        </svg>
+                        Progresso
+                      </>
+                    )}
+                  </h2>
+                  <p className="text-sm text-gray-400 mt-1">
+                    {showUpload
+                      ? 'Envie seus arquivos PHP para traduzir'
+                      : 'Acompanhe a traducao em tempo real'
+                    }
+                  </p>
+                </div>
+
+                {showUpload && (
+                  <FileUpload onUpload={handleUpload} disabled={false} />
+                )}
+
+                {showProgress && (
+                  <TranslationProgress
+                    job={jobData}
+                    onCancel={handleCancel}
+                    onDelete={handleDelete}
+                    onNewTranslation={handleNewTranslation}
+                  />
+                )}
+
+                {currentJobId && !jobData && (
+                  <div className="text-center py-8">
+                    <div className="inline-block shimmer w-6 h-6 border-2 border-accent-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-gray-400 text-sm mt-3">Carregando...</p>
+                  </div>
+                )}
+              </div>
+
+              {showUpload && (
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    onClick={handleClearCache}
+                    className="glass-light text-xs text-gray-500 hover:text-gray-300 px-4 py-2 rounded-lg transition-all
+                               inline-flex items-center gap-2"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    Limpar cache de traducoes falhadas
+                  </button>
+                  {cacheMsg && (
+                    <p className={`text-xs ${cacheMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+                      {cacheMsg.text}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-center">
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className={`status-pulse w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
+                  {connected ? 'Conectado' : 'Desconectado'}
+                </div>
+              </div>
+            </>
+          )}
 
         </div>
       </main>

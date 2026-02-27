@@ -348,6 +348,11 @@ def _run(job, socketio):
                 job.finished_at = datetime.now().isoformat()
                 log.info(f'[{job.job_id}] Cancelado pelo usuario ({idx}/{job.total_files} arquivos)')
                 socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
+                try:
+                    from backend.auth import save_job_history
+                    save_job_history(job.to_dict())
+                except Exception:
+                    pass
                 return
 
             job.current_file = rel
@@ -393,12 +398,26 @@ def _run(job, socketio):
 
         socketio.emit('translation_complete', job.to_dict(), room=job.job_id)
 
+        # Persistir no historico
+        try:
+            from backend.auth import save_job_history
+            save_job_history(job.to_dict())
+        except Exception as he:
+            log.debug(f'[{job.job_id}] Erro ao salvar historico: {he}')
+
     except Exception as e:
         job.status = 'failed'
         job.finished_at = datetime.now().isoformat()
         job.errors.append(f"Erro fatal: {str(e)}")
         log.error(f'[{job.job_id}] FALHA FATAL: {e}', exc_info=True)
         socketio.emit('translation_error', job.to_dict(), room=job.job_id)
+
+        # Persistir falha no historico
+        try:
+            from backend.auth import save_job_history
+            save_job_history(job.to_dict())
+        except Exception as he:
+            log.debug(f'[{job.job_id}] Erro ao salvar historico: {he}')
 
 
 # ============================================================================

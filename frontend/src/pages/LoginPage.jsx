@@ -297,13 +297,13 @@ export default function LoginPage({ onSuccess }) {
       {/* Decorative background orbs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="orb w-96 h-96 bg-accent-500 -top-48 -left-48" />
-        <div className="orb w-80 h-80 bg-glow-cyan top-1/2 -right-40" style={{ animationDelay: '4s' }} />
-        <div className="orb w-64 h-64 bg-glow-purple bottom-0 left-1/3" style={{ animationDelay: '2s' }} />
+        <div className="orb w-80 h-80 bg-accent-400 top-1/2 -right-40" style={{ animationDelay: '4s' }} />
+        <div className="orb w-64 h-64 bg-glow-gold bottom-0 left-1/3" style={{ animationDelay: '2s' }} />
       </div>
 
       {/* Logo */}
       <div className="flex items-center gap-4 mb-10 fade-in relative z-10">
-        <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-accent-500 to-glow-cyan flex items-center justify-center shadow-lg shadow-accent-500/30">
+        <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-accent-500 to-glow-gold flex items-center justify-center shadow-lg shadow-accent-500/30">
           <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <path d="M5 7h14M12 7v12M8 7V5M16 7V5" />
           </svg>
