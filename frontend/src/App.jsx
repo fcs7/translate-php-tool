@@ -179,13 +179,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Status da conexao */}
-          <div className="flex justify-center">
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-              {connected ? 'Conectado' : 'Desconectado'}
-            </div>
-          </div>
 
         </div>
       </main>
