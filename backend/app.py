@@ -22,7 +22,7 @@ from backend.translator import (
     cleanup_old_jobs, count_running_jobs,
 )
 from backend.auth import (
-    init_db, get_or_create_user,
+    init_db, get_or_create_user, list_all_users, get_system_stats, get_user_by_id,
     generate_otp, verify_otp, send_otp_email,
     clear_untranslated_cache,
 )
@@ -38,10 +38,24 @@ from backend.config import ADMIN_EMAILS
 # App
 # ============================================================================
 
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 app = Flask(__name__, static_folder=STATIC_FOLDER, static_url_path='')
+
+# Confiar em 1 proxy (Nginx) para X-Forwarded-For e X-Forwarded-Proto
+# Garante que request.remote_addr reflita o IP real do cliente
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(days=30)
+
+# Session cookie security
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# Em producao (HTTPS): descomentar ou definir via env
+# app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
+
 CORS(app, supports_credentials=True)
 
 # Inicializar banco de dados
@@ -101,6 +115,11 @@ def admin_required(f):
 
 # Rate limit simples: {ip: timestamp_ultimo_upload}
 _upload_timestamps = {}
+
+# Rate limit para tentativas de admin login: {ip: [timestamp, ...]}
+_admin_login_attempts = {}
+_ADMIN_LOGIN_MAX_ATTEMPTS = 5
+_ADMIN_LOGIN_WINDOW = 300  # 5 minutos
 
 # Regex para validar job_id (apenas hex, 8 chars)
 _JOB_ID_RE = re.compile(r'^[a-f0-9]{8}$')
@@ -198,7 +217,11 @@ def auth_verify_otp():
 def auth_logout():
     email = session.pop('user_email', None)
     if email:
+        # Revogar sessoes admin ao fazer logout geral
+        if is_admin(email):
+            revoke_all_admin_sessions(email)
         log.info(f'[AUTH] Logout: {email}')
+    session.clear()
     return jsonify({'message': 'Logout realizado'}), 200
 
 
@@ -425,16 +448,30 @@ def admin_login():
     Gera token admin seguro para usuario que ja esta logado e e admin.
     Token: 384-bit entropy + HMAC-SHA256 + sessao server-side com AES-256-GCM.
     """
-    email = session['user_email']
     ip = request.remote_addr
 
+    # Rate limit de tentativas de admin login por IP
+    now = time.time()
+    attempts = _admin_login_attempts.get(ip, [])
+    attempts = [t for t in attempts if now - t < _ADMIN_LOGIN_WINDOW]
+    if len(attempts) >= _ADMIN_LOGIN_MAX_ATTEMPTS:
+        log.warning(f'[ADMIN] Rate limit atingido para IP {ip}')
+        return jsonify({'error': 'Muitas tentativas. Aguarde 5 minutos.'}), 429
+
+    email = session['user_email']
+
     if not is_admin(email):
-        log.warning(f'[ADMIN] Tentativa de login admin negada: {email}')
+        attempts.append(now)
+        _admin_login_attempts[ip] = attempts
+        log.warning(f'[ADMIN] Tentativa de login admin negada: {email} ({ip})')
         return jsonify({'error': 'Acesso negado'}), 403
 
     token = create_admin_session(email, ip)
     if not token:
         return jsonify({'error': 'Erro ao criar sessao admin'}), 500
+
+    # Limpar tentativas em caso de sucesso
+    _admin_login_attempts.pop(ip, None)
 
     return jsonify({
         'token': token,
@@ -474,25 +511,25 @@ def admin_me():
 @admin_required
 def admin_list_users():
     """Lista todos os usuarios com status admin."""
-    from backend.auth import _db_conn
-    with _db_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, email, is_admin, created_at FROM users ORDER BY id"
-        ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(list_all_users())
 
 
 @app.route('/api/admin/users/<int:user_id>/toggle-admin', methods=['POST'])
 @admin_required
 def admin_toggle_user(user_id):
     """Promove ou rebaixa usuario a admin."""
-    from backend.auth import _db_conn
-    with _db_conn() as conn:
-        row = conn.execute("SELECT email, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+    row = get_user_by_id(user_id)
     if not row:
         return jsonify({'error': 'Usuario nao encontrado'}), 404
 
     new_status = not bool(row['is_admin'])
+
+    # Impedir remocao do ultimo admin
+    if not new_status:
+        current_admins = list_admins()
+        if len(current_admins) <= 1:
+            return jsonify({'error': 'Impossivel remover o ultimo admin do sistema'}), 400
+
     set_admin(row['email'], new_status)
     action = 'promovido a admin' if new_status else 'removido de admin'
     return jsonify({'message': f'{row["email"]} {action}', 'is_admin': new_status})
@@ -540,28 +577,16 @@ def admin_list_all_jobs():
 @admin_required
 def admin_stats():
     """Estatisticas gerais do sistema."""
-    from backend.auth import _db_conn
-    with _db_conn() as conn:
-        user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
-        cache_count = conn.execute("SELECT COUNT(*) FROM translation_cache").fetchone()[0]
-        cache_hits = conn.execute("SELECT SUM(hit_count) FROM translation_cache").fetchone()[0] or 0
-        active_sessions = conn.execute(
-            "SELECT COUNT(*) FROM admin_sessions WHERE revoked = 0 AND expires_at > ?",
-            (time.time(),),
-        ).fetchone()[0]
+    stats = get_system_stats()
+    active_sessions_list = list_active_sessions()
 
-    running = count_running_jobs()
-
-    return jsonify({
-        'users': user_count,
-        'admins': admin_count,
-        'running_jobs': running,
+    stats.update({
+        'running_jobs': count_running_jobs(),
         'max_concurrent_jobs': MAX_CONCURRENT_JOBS,
-        'cache_entries': cache_count,
-        'cache_total_hits': cache_hits,
-        'active_admin_sessions': active_sessions,
+        'active_admin_sessions': len(active_sessions_list),
     })
+
+    return jsonify(stats)
 
 
 # ============================================================================

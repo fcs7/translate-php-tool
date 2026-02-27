@@ -72,6 +72,40 @@ def get_or_create_user(email):
         return dict(row)
 
 
+def list_all_users():
+    """Lista todos os usuarios (para painel admin)."""
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, email, is_admin, created_at FROM users ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_system_stats():
+    """Retorna estatisticas do banco (para painel admin)."""
+    with _db_conn() as conn:
+        user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
+        cache_count = conn.execute("SELECT COUNT(*) FROM translation_cache").fetchone()[0]
+        cache_hits = conn.execute("SELECT SUM(hit_count) FROM translation_cache").fetchone()[0] or 0
+    return {
+        'users': user_count,
+        'admins': admin_count,
+        'cache_entries': cache_count,
+        'cache_total_hits': cache_hits,
+    }
+
+
+def get_user_by_id(user_id):
+    """Busca usuario por ID."""
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT id, email, is_admin, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 # ============================================================================
 # Cache global de traducoes (persistente entre jobs e usuarios)
 # ============================================================================

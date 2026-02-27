@@ -36,11 +36,14 @@ def _derive_key(purpose: bytes) -> bytes:
     """
     Deriva uma chave de 256 bits a partir do SECRET_KEY usando HKDF-SHA256.
     Cada 'purpose' gera uma chave diferente (separacao de dominio).
+    Salt derivado do SECRET_KEY para consistencia entre reinicializacoes.
     """
+    # Salt determinístico derivado do SECRET_KEY (evita salt=None zero-length)
+    salt = hashlib.sha256(b'admin-hkdf-salt:' + SECRET_KEY.encode('utf-8')).digest()
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=32,  # 256 bits
-        salt=None,
+        salt=salt,
         info=purpose,
     )
     return hkdf.derive(SECRET_KEY.encode('utf-8'))
