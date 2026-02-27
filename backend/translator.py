@@ -18,6 +18,8 @@ import backend.translate as trans_engine
 from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
 from backend.engine import get_engine
 
+BATCH_SIZE = 50
+
 
 # ============================================================================
 # Model — Job de traducao
@@ -196,8 +198,8 @@ def _count_strings(file_path):
 
 def _translate_file(src_path, dst_path, delay, job, socketio=None):
     """
-    Traduz um arquivo PHP linha a linha.
-    Usa as funcoes do translate.py mas emite progresso no job.
+    Traduz um arquivo PHP usando batch translation (2-pass).
+    Pass 1: coleta strings traduziveis. Pass 2: traduz em lotes.
     """
     rel = os.path.relpath(src_path, job.input_dir)
 
@@ -229,51 +231,74 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
     mode = 'a' if start_line > 0 else 'w'
     count = 0
 
+    # --- Pass 1: coletar strings traduziveis ---
+    entries = []  # (idx_in_output, text_prepared, ph_map, prefix, suffix, qc)
+    output_lines = []
+
+    for i in range(start_line, total_lines):
+        line = src_lines[i]
+        stripped = line.rstrip('\n')
+
+        m = trans_engine.SINGLE_QUOTE_RE.match(stripped)
+        qc = "'"
+        if not m:
+            m = trans_engine.DOUBLE_QUOTE_RE.match(stripped)
+            qc = '"'
+
+        if m:
+            prefix, raw_value, suffix = m.group(1), m.group(2), m.group(3)
+            text = trans_engine.prepare_for_translation(raw_value, qc)
+            text, ph_map = trans_engine.protect_placeholders(text)
+            entries.append((len(output_lines), text, ph_map, prefix, suffix, qc))
+            output_lines.append(None)  # placeholder, sera preenchido no pass 2
+        else:
+            output_lines.append(line)
+
+    # --- Pass 2: traduzir em batches ---
+    engine = get_engine()
+
     try:
-        with open(dst_path, mode, encoding='utf-8') as out:
-            for i in range(start_line, total_lines):
-                if job._cancel_flag:
-                    log.info(f'[{job.job_id}] Cancelado durante {rel} (linha {i})')
-                    return count
+        for batch_start in range(0, len(entries), BATCH_SIZE):
+            if job._cancel_flag:
+                log.info(f'[{job.job_id}] Cancelado durante {rel} (batch {batch_start // BATCH_SIZE})')
+                break
 
-                line = src_lines[i]
-                stripped = line.rstrip('\n')
+            batch_entries = entries[batch_start:batch_start + BATCH_SIZE]
+            batch_texts = [e[1] for e in batch_entries]
 
-                m = trans_engine.SINGLE_QUOTE_RE.match(stripped)
-                qc = "'"
-                if not m:
-                    m = trans_engine.DOUBLE_QUOTE_RE.match(stripped)
-                    qc = '"'
+            translations = engine.translate_batch(batch_texts)
 
-                if m:
-                    prefix, raw_value, suffix = m.group(1), m.group(2), m.group(3)
+            for entry, translated in zip(batch_entries, translations):
+                idx, _text, ph_map, prefix, suffix, qc = entry
+                translated = trans_engine.restore_placeholders(translated, ph_map)
+                translated = trans_engine.re_escape(translated, qc)
+                output_lines[idx] = prefix + translated + suffix + '\n'
+                count += 1
+                job.translated_strings += 1
 
-                    text = trans_engine.prepare_for_translation(raw_value, qc)
-                    text, ph_map = trans_engine.protect_placeholders(text)
+            # Progresso via WebSocket a cada batch
+            if socketio and job.total_strings > 0:
+                job.progress = int((job.translated_strings / job.total_strings) * 100)
+                socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
 
-                    translated = get_engine().translate(text, delay)
+            time.sleep(delay)
 
-                    translated = trans_engine.restore_placeholders(translated, ph_map)
-                    translated = trans_engine.re_escape(translated, qc)
-
-                    out.write(prefix + translated + suffix + '\n')
-                    count += 1
-                    job.translated_strings += 1
-
-                    if socketio and job.total_strings > 0:
-                        job.progress = int((job.translated_strings / job.total_strings) * 100)
-                        socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
-
-                    time.sleep(delay)
-                else:
-                    out.write(line)
-
-                out.flush()
     except Exception as e:
-        log.error(f'[{job.job_id}] Erro em {rel} linha {i}: {e}')
+        log.error(f'[{job.job_id}] Erro em {rel} batch: {e}')
         job.errors.append(f"Erro: {rel}: {e}")
 
-    log.info(f'[{job.job_id}] {rel}: {count} strings traduzidas')
+    # --- Pass 3: escrever arquivo ---
+    try:
+        with open(dst_path, mode, encoding='utf-8') as out:
+            for line in output_lines:
+                if line is not None:
+                    out.write(line)
+            out.flush()
+    except Exception as e:
+        log.error(f'[{job.job_id}] Erro ao escrever {rel}: {e}')
+        job.errors.append(f"Erro escrita: {rel}: {e}")
+
+    log.info(f'[{job.job_id}] {rel}: {count} strings traduzidas (batch)')
     return count
 
 

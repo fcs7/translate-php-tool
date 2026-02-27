@@ -4,7 +4,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 
 class ProviderStatus(Enum):
@@ -54,6 +54,10 @@ class TranslationProvider(ABC):
     def is_available(self) -> bool:
         """Verifica se o provider esta disponivel."""
         ...
+
+    def translate_batch(self, texts: List[str]) -> List[Optional[str]]:
+        """Traduz lista de textos. Default: chama translate() em loop."""
+        return [self.translate(t) for t in texts]
 
     def check_rate_limit(self) -> bool:
         """Verifica preventivamente se pode fazer mais uma request."""

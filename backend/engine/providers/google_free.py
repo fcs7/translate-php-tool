@@ -1,6 +1,6 @@
 """Provider Google Translate gratuito via deep-translator (sem API key)."""
 
-from typing import Optional
+from typing import List, Optional
 
 from backend.engine.base import TranslationProvider
 
@@ -58,3 +58,34 @@ class GoogleFreeProvider(TranslationProvider):
             is_rate = 'rate' in error_msg or 'too many' in error_msg or '429' in error_msg
             self.record_failure(str(e), is_rate_limit=is_rate)
             return None
+
+    def translate_batch(self, texts: List[str]) -> List[Optional[str]]:
+        """Batch nativo via deep-translator (1 HTTP request para N strings)."""
+        if not texts:
+            return []
+
+        try:
+            translator = self._get_translator()
+            results = translator.translate_batch(texts)
+
+            output = []
+            for original, translated in zip(texts, results):
+                if not translated or translated.strip().lower() == original.strip().lower():
+                    output.append(None)
+                else:
+                    output.append(translated.strip())
+
+            # Registrar stats: 1 request para N textos
+            successful = sum(1 for r in output if r is not None)
+            if successful > 0:
+                self.record_success()
+            else:
+                self.record_failure("Batch retornou todas traducoes identicas")
+
+            return output
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_rate = 'rate' in error_msg or 'too many' in error_msg or '429' in error_msg
+            self.record_failure(str(e), is_rate_limit=is_rate)
+            return [None] * len(texts)

@@ -3,7 +3,7 @@
 import json
 import urllib.parse
 import urllib.request
-from typing import Optional
+from typing import List, Optional
 
 from backend.engine.base import TranslationProvider
 
@@ -69,3 +69,57 @@ class DeepLFreeProvider(TranslationProvider):
             is_rate = '429' in error_msg or '456' in error_msg
             self.record_failure(error_msg, is_rate_limit=is_rate)
             return None
+
+    def translate_batch(self, texts: List[str]) -> List[Optional[str]]:
+        """Batch via DeepL API (multiplos params 'text' em 1 POST request)."""
+        if not texts:
+            return []
+        if not self.api_key:
+            return [None] * len(texts)
+
+        try:
+            # DeepL aceita multiplos parametros 'text' na mesma request
+            data = urllib.parse.urlencode({
+                'auth_key': self.api_key,
+                'source_lang': self.source_lang,
+                'target_lang': self.target_lang,
+            })
+            for t in texts:
+                data += '&' + urllib.parse.urlencode({'text': t})
+
+            req = urllib.request.Request(
+                self.API_URL,
+                data=data.encode('utf-8'),
+                method='POST',
+            )
+            req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+
+            translations = result.get('translations', [])
+
+            output = []
+            for i, original in enumerate(texts):
+                if i < len(translations):
+                    translated = translations[i].get('text', '').strip()
+                    if translated and translated.lower() != original.strip().lower():
+                        output.append(translated)
+                    else:
+                        output.append(None)
+                else:
+                    output.append(None)
+
+            successful = sum(1 for r in output if r is not None)
+            if successful > 0:
+                self.record_success()
+            else:
+                self.record_failure("Batch retornou todas traducoes identicas")
+
+            return output
+
+        except Exception as e:
+            error_msg = str(e)
+            is_rate = '429' in error_msg or '456' in error_msg
+            self.record_failure(error_msg, is_rate_limit=is_rate)
+            return [None] * len(texts)
