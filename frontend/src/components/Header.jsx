@@ -1,4 +1,11 @@
 export default function Header({ user, onLogout }) {
+  const quota = user?.quota
+
+  const quotaColor = !quota ? 'bg-blue-500'
+    : quota.percent > 95 ? 'bg-red-500'
+    : quota.percent > 80 ? 'bg-yellow-500'
+    : 'bg-blue-500'
+
   return (
     <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm">
       <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-3">
@@ -11,6 +18,19 @@ export default function Header({ user, onLogout }) {
 
         {user && onLogout && (
           <div className="flex items-center gap-3">
+            {quota && (
+              <div className="hidden sm:flex items-center gap-2">
+                <div className="w-20 bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${quotaColor}`}
+                    style={{ width: `${Math.min(quota.percent, 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {quota.used_mb} / {quota.limit_mb} MB
+                </span>
+              </div>
+            )}
             <span className="text-xs text-gray-500 hidden sm:block">{user.email}</span>
             <button
               onClick={onLogout}

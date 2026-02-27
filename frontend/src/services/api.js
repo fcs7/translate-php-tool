@@ -91,6 +91,10 @@ export function getDownloadUrl(jobId) {
   return `${API_BASE}/jobs/${jobId}/download`
 }
 
+export function getVoipnowDownloadUrl(jobId) {
+  return `${API_BASE}/jobs/${jobId}/download/voipnow`
+}
+
 // ─── Cache ───────────────────────────────────────────────────────────────────
 
 export async function clearUntranslatedCache() {

@@ -1,4 +1,4 @@
-import { getDownloadUrl } from '../services/api'
+import { getDownloadUrl, getVoipnowDownloadUrl } from '../services/api'
 
 export default function TranslationProgress({ job, onCancel, onDelete, onNewTranslation }) {
   if (!job) return null
@@ -114,12 +114,20 @@ export default function TranslationProgress({ job, onCancel, onDelete, onNewTran
         )}
 
         {isCompleted && (
-          <a
-            href={getDownloadUrl(job.job_id)}
-            className="flex-1 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-500 transition-colors text-center"
-          >
-            Baixar ZIP
-          </a>
+          <>
+            <a
+              href={getDownloadUrl(job.job_id)}
+              className="flex-1 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-500 transition-colors text-center"
+            >
+              Baixar ZIP
+            </a>
+            <a
+              href={getVoipnowDownloadUrl(job.job_id)}
+              className="flex-1 py-2 rounded-lg text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 transition-colors text-center"
+            >
+              Baixar VoipNow
+            </a>
+          </>
         )}
 
         {isDone && (

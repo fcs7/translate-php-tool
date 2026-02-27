@@ -1,5 +1,6 @@
-"""Modulo de autenticacao — OTP por e-mail + SQLite (usuarios + cache de traducoes)."""
+"""Modulo de autenticacao — OTP por e-mail + SQLite (usuarios + cache de traducoes + jobs)."""
 
+import json
 import os
 import random
 import sqlite3
@@ -15,6 +16,8 @@ from backend.config import (
     DB_PATH, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, log,
 )
+
+DEFAULT_STORAGE_LIMIT = 524_288_000  # 500 MB
 
 
 # ============================================================================
@@ -35,6 +38,9 @@ def _db_conn():
         conn.close()
 
 
+_db_lock = threading.Lock()
+
+
 def init_db():
     """Cria tabelas SQLite se nao existirem."""
     with _db_conn() as conn:
@@ -52,7 +58,37 @@ def init_db():
                 created_at       TEXT    NOT NULL,
                 last_used_at     TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id             TEXT PRIMARY KEY,
+                user_email         TEXT NOT NULL,
+                status             TEXT NOT NULL DEFAULT 'pending',
+                progress           INTEGER DEFAULT 0,
+                total_files        INTEGER DEFAULT 0,
+                files_done         INTEGER DEFAULT 0,
+                total_strings      INTEGER DEFAULT 0,
+                translated_strings INTEGER DEFAULT 0,
+                errors             TEXT DEFAULT '[]',
+                validation         TEXT,
+                has_output         INTEGER DEFAULT 0,
+                created_at         TEXT NOT NULL,
+                started_at         TEXT,
+                finished_at        TEXT,
+                file_size_bytes    INTEGER DEFAULT 0,
+                FOREIGN KEY (user_email) REFERENCES users(email)
+            );
         """)
+
+        # Migration: adicionar colunas de quota na tabela users (se nao existirem)
+        for col, definition in [
+            ('storage_used_bytes', 'INTEGER DEFAULT 0'),
+            ('storage_limit_bytes', f'INTEGER DEFAULT {DEFAULT_STORAGE_LIMIT}'),  # 500 MB
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
+            except sqlite3.OperationalError:
+                pass  # coluna ja existe
+
     log.info('[AUTH] Banco de dados inicializado')
 
 
@@ -73,10 +109,152 @@ def get_or_create_user(email):
 
 
 # ============================================================================
-# Cache global de traducoes (persistente entre jobs e usuarios)
+# Jobs — persistencia no SQLite
 # ============================================================================
 
-_db_lock = threading.Lock()
+def save_job_db(job_dict):
+    """Salva ou atualiza job no SQLite (INSERT OR REPLACE)."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO jobs
+                       (job_id, user_email, status, progress, total_files, files_done,
+                        total_strings, translated_strings, errors, validation,
+                        has_output, created_at, started_at, finished_at, file_size_bytes)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        job_dict['job_id'],
+                        job_dict['user_email'],
+                        job_dict['status'],
+                        job_dict.get('progress', 0),
+                        job_dict.get('total_files', 0),
+                        job_dict.get('files_done', 0),
+                        job_dict.get('total_strings', 0),
+                        job_dict.get('translated_strings', 0),
+                        json.dumps(job_dict.get('errors', [])),
+                        json.dumps(job_dict.get('validation')) if job_dict.get('validation') else None,
+                        1 if job_dict.get('has_output') else 0,
+                        job_dict['created_at'],
+                        job_dict.get('started_at'),
+                        job_dict.get('finished_at'),
+                        job_dict.get('file_size_bytes', 0),
+                    ),
+                )
+    except Exception as e:
+        log.error(f'[DB] Erro ao salvar job: {e}')
+
+
+def get_jobs_db(user_email):
+    """Retorna lista de jobs do usuario (do mais recente ao mais antigo)."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE user_email = ? ORDER BY created_at DESC",
+                    (user_email,),
+                ).fetchall()
+                return [_row_to_job_dict(r) for r in rows]
+    except Exception as e:
+        log.error(f'[DB] Erro ao buscar jobs: {e}')
+        return []
+
+
+def get_job_db(job_id):
+    """Retorna um job do SQLite ou None."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE job_id = ?", (job_id,),
+                ).fetchone()
+                return _row_to_job_dict(row) if row else None
+    except Exception as e:
+        log.error(f'[DB] Erro ao buscar job {job_id}: {e}')
+        return None
+
+
+def delete_job_db(job_id):
+    """Remove job do SQLite."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+    except Exception as e:
+        log.error(f'[DB] Erro ao deletar job {job_id}: {e}')
+
+
+def _row_to_job_dict(row):
+    """Converte sqlite3.Row da tabela jobs em dict compativel com TranslationJob.to_dict()."""
+    d = dict(row)
+    # Deserializar JSON
+    try:
+        d['errors'] = json.loads(d.get('errors') or '[]')
+    except (json.JSONDecodeError, TypeError):
+        d['errors'] = []
+    try:
+        d['validation'] = json.loads(d['validation']) if d.get('validation') else None
+    except (json.JSONDecodeError, TypeError):
+        d['validation'] = None
+    d['has_output'] = bool(d.get('has_output'))
+    return d
+
+
+# ============================================================================
+# Quota de storage por usuario
+# ============================================================================
+
+def get_user_quota(email):
+    """Retorna info de quota do usuario."""
+    email = email.strip().lower()
+    with _db_lock:
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT storage_used_bytes, storage_limit_bytes FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+            if not row:
+                return {'used_bytes': 0, 'limit_bytes': DEFAULT_STORAGE_LIMIT,
+                        'used_mb': 0, 'limit_mb': 500, 'percent': 0}
+            used = row['storage_used_bytes'] or 0
+            limit = row['storage_limit_bytes'] or DEFAULT_STORAGE_LIMIT
+            return {
+                'used_bytes': used,
+                'limit_bytes': limit,
+                'used_mb': round(used / (1024 * 1024), 1),
+                'limit_mb': round(limit / (1024 * 1024), 1),
+                'percent': round((used / limit) * 100, 1) if limit > 0 else 0,
+            }
+
+
+def update_storage_used(email, delta_bytes):
+    """Atualiza storage_used_bytes do usuario (pode ser positivo ou negativo)."""
+    email = email.strip().lower()
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                conn.execute(
+                    """UPDATE users
+                       SET storage_used_bytes = MAX(0, COALESCE(storage_used_bytes, 0) + ?)
+                       WHERE email = ?""",
+                    (delta_bytes, email),
+                )
+    except Exception as e:
+        log.error(f'[QUOTA] Erro ao atualizar storage de {email}: {e}')
+
+
+def check_storage_available(email, new_bytes):
+    """Retorna True se o usuario tem espaco disponivel. Falha fechada em caso de erro."""
+    try:
+        quota = get_user_quota(email)
+        return (quota['used_bytes'] + new_bytes) <= quota['limit_bytes']
+    except Exception:
+        return False
+
+
+# ============================================================================
+# Cache global de traducoes (persistente entre jobs e usuarios)
+# ============================================================================
 
 
 def get_cached_translation_db(source_text):

@@ -14,7 +14,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, join_room
 
 from backend.config import (
-    UPLOAD_FOLDER, STATIC_FOLDER, MAX_CONTENT_LENGTH,
+    UPLOAD_FOLDER, JOBS_FOLDER, STATIC_FOLDER, MAX_CONTENT_LENGTH,
     MAX_CONCURRENT_JOBS, RATE_LIMIT_SECONDS, SECRET_KEY, log,
 )
 from backend.translator import (
@@ -25,6 +25,8 @@ from backend.auth import (
     init_db, get_or_create_user,
     generate_otp, verify_otp, send_otp_email,
     clear_untranslated_cache,
+    get_user_quota, check_storage_available,
+    get_job_db,
 )
 
 # ============================================================================
@@ -111,6 +113,27 @@ def _check_rate_limit(ip):
     return True
 
 
+def _resolve_job(job_id, require_completed=False):
+    """Resolve job da memoria ou DB. Retorna (dict, error_response).
+    Se ok: (job_dict, None). Se erro: (None, response_tuple)."""
+    job = get_job(job_id)
+    if job:
+        if job.user_email != session['user_email']:
+            return None, (jsonify({'error': 'Acesso negado'}), 403)
+        if require_completed and job.status != 'completed':
+            return None, (jsonify({'error': 'Traducao ainda nao concluida'}), 400)
+        return job.to_dict(), None
+
+    db_job = get_job_db(job_id)
+    if not db_job:
+        return None, (jsonify({'error': 'Job nao encontrado'}), 404)
+    if db_job['user_email'] != session['user_email']:
+        return None, (jsonify({'error': 'Acesso negado'}), 403)
+    if require_completed and (db_job['status'] != 'completed' or not db_job.get('has_output')):
+        return None, (jsonify({'error': 'Traducao ainda nao concluida'}), 400)
+    return db_job, None
+
+
 # ============================================================================
 # Rotas de autenticacao
 # ============================================================================
@@ -170,6 +193,7 @@ def auth_me():
     if not email:
         return jsonify({'error': 'Nao autenticado'}), 401
     user = get_or_create_user(email)
+    user['quota'] = get_user_quota(email)
     return jsonify({'user': user}), 200
 
 
@@ -216,6 +240,17 @@ def upload_file():
     file_size = os.path.getsize(filepath)
     log.info(f'{ip} upload: {f.filename} ({file_size / 1024:.1f} KB)')
 
+    # Verificar quota de storage
+    if not check_storage_available(session['user_email'], file_size):
+        os.remove(filepath)
+        quota = get_user_quota(session['user_email'])
+        log.warning(f'{ip} quota excedida: {quota["used_mb"]} MB / {quota["limit_mb"]} MB')
+        return jsonify({
+            'error': f'Cota de armazenamento excedida ({quota["used_mb"]} MB / {quota["limit_mb"]} MB). '
+                     'Delete traducoes antigas para liberar espaco.',
+            'quota': quota,
+        }), 413
+
     delay = max(0.05, min(float(request.form.get('delay', 0.2)), 5.0))
 
     try:
@@ -241,12 +276,10 @@ def get_jobs():
 def get_job_status(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
-    job = get_job(job_id)
-    if not job:
-        return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
-        return jsonify({'error': 'Acesso negado'}), 403
-    return jsonify(job.to_dict())
+    data, err = _resolve_job(job_id)
+    if err:
+        return err
+    return jsonify(data)
 
 
 @app.route('/api/jobs/<job_id>/download')
@@ -254,19 +287,39 @@ def get_job_status(job_id):
 def download_job(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
-    job = get_job(job_id)
-    if not job:
-        return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
-        return jsonify({'error': 'Acesso negado'}), 403
-    if job.status != 'completed' or not job.output_zip:
-        return jsonify({'error': 'Traducao ainda nao concluida'}), 400
-    log.info(f'{request.remote_addr} download: {job_id}')
+    data, err = _resolve_job(job_id, require_completed=True)
+    if err:
+        return err
+    zip_path = os.path.join(JOBS_FOLDER, job_id, 'output.zip')
+    if not os.path.exists(zip_path):
+        return jsonify({'error': 'Arquivo de saida nao encontrado (pode ter sido limpo)'}), 410
+    log.info(f'{request.remote_addr} download ZIP: {job_id}')
     return send_file(
-        job.output_zip,
+        zip_path,
         mimetype='application/zip',
         as_attachment=True,
         download_name=f'traducao_{job_id}.zip',
+    )
+
+
+@app.route('/api/jobs/<job_id>/download/voipnow')
+@login_required
+def download_voipnow(job_id):
+    """Download do language pack no formato VoipNow (tar.gz)."""
+    if not _validate_job_id(job_id):
+        return jsonify({'error': 'ID invalido'}), 400
+    data, err = _resolve_job(job_id, require_completed=True)
+    if err:
+        return err
+    tar_path = os.path.join(JOBS_FOLDER, job_id, 'voipnow.tar.gz')
+    if not os.path.exists(tar_path):
+        return jsonify({'error': 'Arquivo VoipNow nao encontrado'}), 410
+    log.info(f'{request.remote_addr} download VoipNow: {job_id}')
+    return send_file(
+        tar_path,
+        mimetype='application/gzip',
+        as_attachment=True,
+        download_name=f'voipnow_pt_br_{job_id}.tar.gz',
     )
 
 
@@ -275,11 +328,9 @@ def download_job(job_id):
 def remove_job(job_id):
     if not _validate_job_id(job_id):
         return jsonify({'error': 'ID invalido'}), 400
-    job = get_job(job_id)
-    if not job:
-        return jsonify({'error': 'Job nao encontrado'}), 404
-    if job.user_email != session['user_email']:
-        return jsonify({'error': 'Acesso negado'}), 403
+    data, err = _resolve_job(job_id)
+    if err:
+        return err
     delete_job(job_id)
     log.info(f'{request.remote_addr} deletou job: {job_id}')
     return jsonify({'message': 'Job removido'})
