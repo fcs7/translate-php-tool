@@ -34,6 +34,14 @@ DB_PATH = os.path.join(BASE_DIR, 'users.db')
 OTP_EXPIRY_MINUTES = 15
 OTP_MAX_ATTEMPTS = 3
 
+# Sessao admin (criptografia forte)
+ADMIN_SESSION_EXPIRY_HOURS = int(os.environ.get('ADMIN_SESSION_EXPIRY_HOURS', '4'))
+ADMIN_EMAILS = [
+    e.strip().lower()
+    for e in os.environ.get('ADMIN_EMAILS', '').split(',')
+    if e.strip()
+]
+
 # SMTP (via variaveis de ambiente)
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))

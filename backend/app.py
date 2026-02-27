@@ -26,6 +26,13 @@ from backend.auth import (
     generate_otp, verify_otp, send_otp_email,
     clear_untranslated_cache,
 )
+from backend.admin_auth import (
+    init_admin_db, create_admin_session, validate_admin_session,
+    revoke_admin_session, revoke_all_admin_sessions,
+    is_admin, set_admin, list_admins, list_active_sessions,
+    cleanup_expired_sessions,
+)
+from backend.config import ADMIN_EMAILS
 
 # ============================================================================
 # App
@@ -39,6 +46,12 @@ CORS(app, supports_credentials=True)
 
 # Inicializar banco de dados
 init_db()
+init_admin_db()
+
+# Auto-promover admins listados em ADMIN_EMAILS
+for _admin_email in ADMIN_EMAILS:
+    get_or_create_user(_admin_email)
+    set_admin(_admin_email, True)
 
 try:
     import gevent  # noqa: F401
@@ -58,6 +71,30 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if 'user_email' not in session:
             return jsonify({'error': 'Autenticacao necessaria'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+def admin_required(f):
+    """
+    Decorator: exige sessao admin valida.
+    Verifica token no header Authorization: Bearer <token>
+    com validacao AES-256-GCM + HMAC-SHA256 + IP binding.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Token admin ausente'}), 401
+
+        token = auth_header[7:]
+        admin_session = validate_admin_session(token, request.remote_addr)
+        if not admin_session:
+            return jsonify({'error': 'Sessao admin invalida ou expirada'}), 401
+
+        # Injetar dados do admin no request context
+        request.admin_email = admin_session['email']
+        request.admin_session = admin_session
         return f(*args, **kwargs)
     return decorated
 
@@ -150,6 +187,7 @@ def auth_verify_otp():
         return jsonify({'error': reason}), 401
 
     user = get_or_create_user(email)
+    user['is_admin'] = is_admin(email)
     session['user_email'] = email
     session.permanent = True
     log.info(f'[AUTH] Login: {email}')
@@ -170,6 +208,7 @@ def auth_me():
     if not email:
         return jsonify({'error': 'Nao autenticado'}), 401
     user = get_or_create_user(email)
+    user['is_admin'] = is_admin(email)
     return jsonify({'user': user}), 200
 
 
@@ -376,6 +415,156 @@ def engine_stats():
 
 
 # ============================================================================
+# Admin — Sessao
+# ============================================================================
+
+@app.route('/api/admin/login', methods=['POST'])
+@login_required
+def admin_login():
+    """
+    Gera token admin seguro para usuario que ja esta logado e e admin.
+    Token: 384-bit entropy + HMAC-SHA256 + sessao server-side com AES-256-GCM.
+    """
+    email = session['user_email']
+    ip = request.remote_addr
+
+    if not is_admin(email):
+        log.warning(f'[ADMIN] Tentativa de login admin negada: {email}')
+        return jsonify({'error': 'Acesso negado'}), 403
+
+    token = create_admin_session(email, ip)
+    if not token:
+        return jsonify({'error': 'Erro ao criar sessao admin'}), 500
+
+    return jsonify({
+        'token': token,
+        'message': 'Sessao admin criada',
+    }), 200
+
+
+@app.route('/api/admin/logout', methods=['POST'])
+@admin_required
+def admin_logout():
+    """Revoga sessao admin atual."""
+    auth_header = request.headers.get('Authorization', '')
+    token = auth_header[7:]  # Remove 'Bearer '
+    revoke_admin_session(token)
+    return jsonify({'message': 'Sessao admin revogada'}), 200
+
+
+@app.route('/api/admin/me')
+@admin_required
+def admin_me():
+    """Retorna dados da sessao admin."""
+    return jsonify({
+        'email': request.admin_email,
+        'is_admin': True,
+        'session': {
+            'created_at': request.admin_session['created_at'],
+            'ip': request.admin_session['ip'],
+        },
+    })
+
+
+# ============================================================================
+# Admin — Gestao de usuarios
+# ============================================================================
+
+@app.route('/api/admin/users')
+@admin_required
+def admin_list_users():
+    """Lista todos os usuarios com status admin."""
+    from backend.auth import _db_conn
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, email, is_admin, created_at FROM users ORDER BY id"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/admin/users/<int:user_id>/toggle-admin', methods=['POST'])
+@admin_required
+def admin_toggle_user(user_id):
+    """Promove ou rebaixa usuario a admin."""
+    from backend.auth import _db_conn
+    with _db_conn() as conn:
+        row = conn.execute("SELECT email, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        return jsonify({'error': 'Usuario nao encontrado'}), 404
+
+    new_status = not bool(row['is_admin'])
+    set_admin(row['email'], new_status)
+    action = 'promovido a admin' if new_status else 'removido de admin'
+    return jsonify({'message': f'{row["email"]} {action}', 'is_admin': new_status})
+
+
+@app.route('/api/admin/admins')
+@admin_required
+def admin_list_admins():
+    """Lista todos os admins."""
+    return jsonify(list_admins())
+
+
+@app.route('/api/admin/sessions')
+@admin_required
+def admin_list_sessions():
+    """Lista sessoes admin ativas."""
+    return jsonify(list_active_sessions())
+
+
+@app.route('/api/admin/sessions/revoke-all', methods=['POST'])
+@admin_required
+def admin_revoke_all():
+    """Revoga todas as sessoes de um admin (exceto a propria)."""
+    data = request.get_json(silent=True) or {}
+    target_email = data.get('email', '').strip().lower()
+    if not target_email:
+        return jsonify({'error': 'E-mail obrigatorio'}), 400
+    count = revoke_all_admin_sessions(target_email)
+    return jsonify({'revoked': count, 'message': f'{count} sessoes revogadas'})
+
+
+# ============================================================================
+# Admin — Gestao de jobs (todos os usuarios)
+# ============================================================================
+
+@app.route('/api/admin/jobs')
+@admin_required
+def admin_list_all_jobs():
+    """Lista todos os jobs de todos os usuarios (visao admin)."""
+    all_jobs = list_jobs()  # Sem filtro de email
+    return jsonify(all_jobs)
+
+
+@app.route('/api/admin/stats')
+@admin_required
+def admin_stats():
+    """Estatisticas gerais do sistema."""
+    from backend.auth import _db_conn
+    with _db_conn() as conn:
+        user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
+        cache_count = conn.execute("SELECT COUNT(*) FROM translation_cache").fetchone()[0]
+        cache_hits = conn.execute("SELECT SUM(hit_count) FROM translation_cache").fetchone()[0] or 0
+        active_sessions = conn.execute(
+            "SELECT COUNT(*) FROM admin_sessions WHERE revoked = 0 AND expires_at > ?",
+            (time.time(),),
+        ).fetchone()[0]
+
+    running = count_running_jobs()
+
+    return jsonify({
+        'users': user_count,
+        'admins': admin_count,
+        'running_jobs': running,
+        'max_concurrent_jobs': MAX_CONCURRENT_JOBS,
+        'cache_entries': cache_count,
+        'cache_total_hits': cache_hits,
+        'active_admin_sessions': active_sessions,
+    })
+
+
+# ============================================================================
 # WebSocket
 # ============================================================================
 
@@ -438,5 +627,6 @@ def serve_static(path):
 
 if __name__ == '__main__':
     cleanup_old_jobs()
+    cleanup_expired_sessions()
     log.info('Servidor iniciando em http://localhost:5000')
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
