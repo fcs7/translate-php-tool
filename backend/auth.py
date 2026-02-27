@@ -123,6 +123,22 @@ def save_cached_translation_db(source_text, translated_text):
         log.debug(f'[CACHE] Erro ao salvar cache: {e}')
 
 
+def clear_untranslated_cache():
+    """Remove entradas do cache onde a traducao e igual ao original."""
+    try:
+        with _db_lock:
+            with _db_conn() as conn:
+                deleted = conn.execute(
+                    "DELETE FROM translation_cache "
+                    "WHERE LOWER(TRIM(source_text)) = LOWER(TRIM(translated_text))"
+                ).rowcount
+                log.info(f'[CACHE] Limpeza: {deleted} traducoes falhadas removidas do cache')
+                return deleted
+    except Exception as e:
+        log.error(f'[CACHE] Erro ao limpar cache: {e}')
+        return 0
+
+
 # ============================================================================
 # OTP em memoria
 # ============================================================================

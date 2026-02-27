@@ -24,6 +24,7 @@ from backend.translator import (
 from backend.auth import (
     init_db, get_or_create_user,
     generate_otp, verify_otp, send_otp_email,
+    clear_untranslated_cache,
 )
 
 # ============================================================================
@@ -299,6 +300,19 @@ def cancel_job(job_id):
     job.cancel()
     log.info(f'{request.remote_addr} cancelou job: {job_id}')
     return jsonify({'message': 'Cancelamento solicitado'})
+
+
+# ============================================================================
+# Manutencao de cache
+# ============================================================================
+
+@app.route('/api/cache/clear-untranslated', methods=['POST'])
+@login_required
+def clear_cache():
+    """Remove traducoes falhadas do cache (source == translated)."""
+    deleted = clear_untranslated_cache()
+    log.info(f'{request.remote_addr} limpou cache: {deleted} entradas removidas')
+    return jsonify({'deleted': deleted, 'message': f'{deleted} traducoes falhadas removidas do cache'})
 
 
 # ============================================================================

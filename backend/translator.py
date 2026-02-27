@@ -260,9 +260,12 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
                     was_cached = text in cache
                     translated = trans_engine.get_cached_translation(text, delay, cache)
 
-                    # Persiste no SQLite se foi uma nova traducao
-                    if not was_cached:
+                    # Persiste no SQLite APENAS se realmente traduziu (output != input)
+                    actually_translated = translated.strip().lower() != text.strip().lower()
+                    if not was_cached and actually_translated:
                         save_cached_translation_db(text, translated)
+                    elif not was_cached and not actually_translated and len(text) > 10:
+                        log.warning(f'[{job.job_id}] Traducao falhou silenciosamente: {text[:60]}...')
 
                     translated = trans_engine.restore_placeholders(translated, ph_map)
                     translated = trans_engine.re_escape(translated, qc)

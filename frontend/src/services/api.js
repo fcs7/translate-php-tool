@@ -90,3 +90,15 @@ export async function deleteJob(jobId) {
 export function getDownloadUrl(jobId) {
   return `${API_BASE}/jobs/${jobId}/download`
 }
+
+// ─── Cache ───────────────────────────────────────────────────────────────────
+
+export async function clearUntranslatedCache() {
+  const res = await fetch(`${API_BASE}/cache/clear-untranslated`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Erro ao limpar cache')
+  return data
+}

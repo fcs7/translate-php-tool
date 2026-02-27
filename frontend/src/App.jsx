@@ -5,11 +5,12 @@ import TranslationProgress from './components/TranslationProgress'
 import LoginPage from './pages/LoginPage'
 import { useSocket } from './hooks/useSocket'
 import { useAuth } from './hooks/useAuth'
-import { uploadZip, cancelJob, deleteJob, getJobs, getJobStatus } from './services/api'
+import { uploadZip, cancelJob, deleteJob, getJobs, getJobStatus, clearUntranslatedCache } from './services/api'
 
 export default function App() {
   const { user, loading, isAuthenticated, logout, refetch } = useAuth()
   const [currentJobId, setCurrentJobId] = useState(null)
+  const [cacheMsg, setCacheMsg] = useState(null)
   const { jobData, setJobData, connected, joinJob } = useSocket()
   const hasRestoredRef = useRef(false)
 
@@ -90,6 +91,16 @@ export default function App() {
     setJobData(null)
   }, [setJobData])
 
+  const handleClearCache = useCallback(async () => {
+    setCacheMsg(null)
+    try {
+      const data = await clearUntranslatedCache()
+      setCacheMsg({ ok: true, text: data.message })
+    } catch (err) {
+      setCacheMsg({ ok: false, text: err.message })
+    }
+  }, [])
+
   // ─── Carregando sessao ───────────────────────────────────────────────────
   if (loading) {
     return (
@@ -150,6 +161,23 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {/* Limpar cache de traducoes falhadas */}
+          {showUpload && (
+            <div className="flex flex-col items-center gap-2">
+              <button
+                onClick={handleClearCache}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Limpar cache de traducoes falhadas
+              </button>
+              {cacheMsg && (
+                <p className={`text-xs ${cacheMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+                  {cacheMsg.text}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Status da conexao */}
           <div className="flex justify-center">

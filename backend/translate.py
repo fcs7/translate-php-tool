@@ -290,23 +290,27 @@ def re_escape(translated, quote_char):
 
 
 def translate_text(text, delay):
-    """Traduz texto usando trans -b en:pt-br. Retry 1x em caso de falha."""
+    """Traduz texto usando trans -b en:pt-br. Retry com backoff em caso de falha."""
     if not text.strip():
         return text
 
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             result = subprocess.run(
                 ['trans', '-b', f'{SOURCE_LANG}:{TARGET_LANG}', text],
                 capture_output=True, text=True, timeout=30
             )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+            translated = result.stdout.strip()
+            if result.returncode == 0 and translated:
+                # Verificar se realmente traduziu (output != input)
+                if translated.lower() != text.strip().lower():
+                    return translated
+                # Se output == input, pode ser rate-limit — tentar novamente
         except subprocess.TimeoutExpired:
             pass
 
-        if attempt == 0:
-            time.sleep(2)
+        # Backoff progressivo: 2s, 4s, 6s
+        time.sleep(2 * (attempt + 1))
 
     print(f"  AVISO: falha na tradução, mantendo original: {text[:60]}")
     return text
