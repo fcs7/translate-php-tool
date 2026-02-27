@@ -315,6 +315,14 @@ def clear_cache():
     return jsonify({'deleted': deleted, 'message': f'{deleted} traducoes falhadas removidas do cache'})
 
 
+@app.route('/api/engine/stats')
+@login_required
+def engine_stats():
+    """Retorna metricas da engine de traducao (providers, cache, status)."""
+    from backend.engine import get_engine
+    return jsonify(get_engine().get_stats())
+
+
 # ============================================================================
 # WebSocket
 # ============================================================================

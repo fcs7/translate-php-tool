@@ -16,7 +16,7 @@ from datetime import datetime
 import backend.translate as trans_engine
 
 from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
-from backend.auth import get_cached_translation_db, save_cached_translation_db
+from backend.engine import get_engine
 
 
 # ============================================================================
@@ -194,7 +194,7 @@ def _count_strings(file_path):
 # Traducao de arquivo individual (com progresso)
 # ============================================================================
 
-def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
+def _translate_file(src_path, dst_path, delay, job, socketio=None):
     """
     Traduz um arquivo PHP linha a linha.
     Usa as funcoes do translate.py mas emite progresso no job.
@@ -251,21 +251,7 @@ def _translate_file(src_path, dst_path, delay, cache, job, socketio=None):
                     text = trans_engine.prepare_for_translation(raw_value, qc)
                     text, ph_map = trans_engine.protect_placeholders(text)
 
-                    # Cache SQLite global: popula cache local antes de chamar translate-shell
-                    if text not in cache:
-                        db_result = get_cached_translation_db(text)
-                        if db_result:
-                            cache[text] = db_result
-
-                    was_cached = text in cache
-                    translated = trans_engine.get_cached_translation(text, delay, cache)
-
-                    # Persiste no SQLite APENAS se realmente traduziu (output != input)
-                    actually_translated = translated.strip().lower() != text.strip().lower()
-                    if not was_cached and actually_translated:
-                        save_cached_translation_db(text, translated)
-                    elif not was_cached and not actually_translated and len(text) > 10:
-                        log.warning(f'[{job.job_id}] Traducao falhou silenciosamente: {text[:60]}...')
+                    translated = get_engine().translate(text, delay)
 
                     translated = trans_engine.restore_placeholders(translated, ph_map)
                     translated = trans_engine.re_escape(translated, qc)
@@ -303,8 +289,8 @@ def _run(job, socketio):
     socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
 
     try:
-        log.debug(f'[{job.job_id}] Verificando translate-shell...')
-        trans_engine.ensure_trans()
+        log.debug(f'[{job.job_id}] Inicializando engine de traducao...')
+        get_engine()  # Garante que a engine esta inicializada
 
         # Coletar arquivos PHP
         tasks = []
@@ -331,8 +317,6 @@ def _run(job, socketio):
             socketio.emit('translation_error', job.to_dict(), room=job.job_id)
             return
 
-        cache = {}
-
         for idx, (src, dst, rel, _) in enumerate(tasks):
             if job._cancel_flag:
                 job.status = 'cancelled'
@@ -346,7 +330,7 @@ def _run(job, socketio):
             log.info(f'[{job.job_id}] [{idx + 1}/{job.total_files}] Traduzindo: {rel}')
             socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
 
-            _translate_file(src, dst, job.delay, cache, job, socketio)
+            _translate_file(src, dst, job.delay, job, socketio)
 
         # Finalizar
         job.files_done = job.total_files
@@ -376,8 +360,11 @@ def _run(job, socketio):
 
         elapsed = (datetime.fromisoformat(job.finished_at) -
                    datetime.fromisoformat(job.started_at)).total_seconds()
+        cache_stats = get_engine().cache.get_stats()
         log.info(f'[{job.job_id}] CONCLUIDO em {elapsed:.1f}s — '
-                 f'{job.translated_strings} strings, {len(cache)} unicas (cache)')
+                 f'{job.translated_strings} strings, '
+                 f'{cache_stats["l1_size"]} unicas (cache L1, '
+                 f'hit rate {cache_stats["hit_rate_total"]})')
 
         socketio.emit('translation_complete', job.to_dict(), room=job.job_id)
 

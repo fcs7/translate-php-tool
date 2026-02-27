@@ -23,6 +23,11 @@ DEFAULT_DELAY = 0.2
 SOURCE_LANG = 'en'
 TARGET_LANG = 'pt-br'
 
+# Providers de traducao
+DEEPL_API_KEY = os.environ.get('DEEPL_API_KEY', '')
+MYMEMORY_EMAIL = os.environ.get('MYMEMORY_EMAIL', '')
+CACHE_MEMORY_SIZE = int(os.environ.get('CACHE_MEMORY_SIZE', '10000'))
+
 # Autenticacao
 SECRET_KEY = os.environ.get('SECRET_KEY', os.urandom(32).hex())
 DB_PATH = os.path.join(BASE_DIR, 'users.db')
