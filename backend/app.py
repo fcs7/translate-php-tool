@@ -210,11 +210,20 @@ def auth_login():
 
 @app.route('/api/auth/request-otp', methods=['POST'])
 def auth_request_otp():
+    """Solicita OTP — apenas para contas existentes (recuperacao de senha)."""
     data = request.get_json(silent=True) or {}
     email = (data.get('email') or '').strip().lower()
 
     if not email or '@' not in email or '.' not in email.split('@')[-1]:
         return jsonify({'error': 'E-mail invalido'}), 400
+
+    # Verificar se a conta existe — mensagem generica para evitar enumeracao
+    from backend.auth import _db_conn
+    with _db_conn() as conn:
+        row = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+    if not row:
+        # Nao revelar se o e-mail existe ou nao
+        return jsonify({'message': 'Se o e-mail estiver cadastrado, voce recebera um codigo.'}), 200
 
     code, remaining = generate_otp(email)
     if code is None:
@@ -225,12 +234,13 @@ def auth_request_otp():
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
 
-    log.info(f'[AUTH] OTP solicitado: {email}')
-    return jsonify({'message': 'Codigo enviado'}), 200
+    log.info(f'[AUTH] OTP recuperacao solicitado: {email}')
+    return jsonify({'message': 'Se o e-mail estiver cadastrado, voce recebera um codigo.'}), 200
 
 
 @app.route('/api/auth/verify-otp', methods=['POST'])
 def auth_verify_otp():
+    """Verifica OTP — apenas para contas existentes (recuperacao de senha)."""
     data = request.get_json(silent=True) or {}
     email = (data.get('email') or '').strip().lower()
     code = (data.get('code') or '').strip()
@@ -242,11 +252,20 @@ def auth_verify_otp():
     if not ok:
         return jsonify({'error': reason}), 401
 
-    user = get_or_create_user(email)
+    # Apenas login — nao cria conta nova
+    from backend.auth import _db_conn
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT id, email, created_at FROM users WHERE email = ?", (email,)
+        ).fetchone()
+    if not row:
+        return jsonify({'error': 'Conta nao encontrada. Cadastre-se primeiro.'}), 401
+
+    user = dict(row)
     user['is_admin'] = is_admin(email)
     session['user_email'] = email
     session.permanent = True
-    log.info(f'[AUTH] Login: {email}')
+    log.info(f'[AUTH] Login via recuperacao OTP: {email}')
     return jsonify({'user': user}), 200
 
 
