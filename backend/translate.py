@@ -435,6 +435,46 @@ def process_file(src_path, dst_path, dst_dir, delay, cache, debug=False):
 # Validação e Verificação
 # =============================================================================
 
+def _looks_untranslated(text):
+    """Heuristica: string identica ao original parece realmente nao traduzida?
+    Retorna False para strings que sao legitimamente iguais em EN e PT-BR.
+    """
+    if len(text) <= 10:
+        return False
+
+    # Strings com placeholders — podem ser so placeholders
+    if '{' in text:
+        return False
+
+    # URLs, emails, paths
+    if '://' in text or 'www.' in text or '@' in text:
+        return False
+
+    # HTML/XML tags
+    if '<' in text and '>' in text:
+        return False
+
+    # Separar caracteres alfabeticos
+    alpha = ''.join(c for c in text if c.isalpha())
+    if not alpha:
+        return False  # Sem letras = tecnico/numerico
+
+    # ALL_CAPS (constantes, siglas): "SMTP_AUTH", "TLS/SSL"
+    if alpha == alpha.upper():
+        return False
+
+    # Contar palavras com letras minusculas (texto real)
+    words = text.split()
+    translatable_words = 0
+    for w in words:
+        clean = ''.join(c for c in w if c.isalpha())
+        if clean and not clean.isupper() and len(clean) >= 2:
+            translatable_words += 1
+
+    # Precisa ter pelo menos 3 palavras traduziveis para ser suspeito
+    return translatable_words >= 3
+
+
 def validate_translation(src_dir, dst_dir):
     """
     Valida a qualidade da tradução comparando EN vs BR.
@@ -529,8 +569,9 @@ def validate_translation(src_dir, dst_dir):
             src_placeholders = set(PLACEHOLDER_RE.findall(src_val))
             dst_placeholders = set(PLACEHOLDER_RE.findall(dst_val))
 
-            # Checar se string foi traduzida (heurística: não pode ser idêntica se tiver texto)
-            if src_val == dst_val and len(src_val) > 10 and '{' not in src_val:
+            # Checar se string foi traduzida
+            # Heuristica: identica ao original E parece conter texto traduzivel
+            if src_val == dst_val and _looks_untranslated(src_val):
                 stats['untranslated'] += 1
                 issues.append({
                     'type': 'untranslated',
