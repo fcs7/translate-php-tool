@@ -1,7 +1,8 @@
-"""Modulo de autenticacao — OTP por e-mail + SQLite (usuarios + cache de traducoes)."""
+"""Modulo de autenticacao — Senha + OTP por e-mail + SQLite (usuarios + cache de traducoes)."""
 
 import os
 import random
+import re
 import sqlite3
 import smtplib
 import threading
@@ -10,6 +11,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from backend.config import (
     DB_PATH, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
@@ -40,9 +43,10 @@ def init_db():
     with _db_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                email      TEXT    UNIQUE NOT NULL,
-                created_at TEXT    NOT NULL
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                email         TEXT    UNIQUE NOT NULL,
+                password_hash TEXT,
+                created_at    TEXT    NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS translation_cache (
@@ -53,6 +57,12 @@ def init_db():
                 last_used_at     TEXT    NOT NULL
             );
         """)
+        # Migracao: adicionar coluna password_hash se nao existir
+        try:
+            conn.execute("SELECT password_hash FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            log.info('[AUTH] Coluna password_hash adicionada (migracao)')
     log.info('[AUTH] Banco de dados inicializado')
 
 
@@ -104,6 +114,105 @@ def get_user_by_id(user_id):
             (user_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+# ============================================================================
+# Autenticacao por senha
+# ============================================================================
+
+# Requisitos minimos da senha
+_MIN_PASSWORD_LENGTH = 6
+
+
+def _validate_password(password):
+    """Valida requisitos minimos da senha. Retorna (ok, mensagem)."""
+    if not password or len(password) < _MIN_PASSWORD_LENGTH:
+        return False, f'Senha deve ter pelo menos {_MIN_PASSWORD_LENGTH} caracteres.'
+    return True, None
+
+
+def register_user(email, password):
+    """
+    Registra usuario com e-mail + senha.
+    Retorna (user_dict, None) se sucesso, (None, erro) se falha.
+    Usa scrypt (werkzeug default) — seguro e resistente a brute-force.
+    """
+    email = email.strip().lower()
+    if not email or '@' not in email or '.' not in email.split('@')[-1]:
+        return None, 'E-mail invalido.'
+
+    ok, msg = _validate_password(password)
+    if not ok:
+        return None, msg
+
+    now = datetime.now().isoformat()
+    hashed = generate_password_hash(password)
+
+    with _db_conn() as conn:
+        existing = conn.execute(
+            "SELECT id, password_hash FROM users WHERE email = ?", (email,)
+        ).fetchone()
+
+        if existing:
+            if existing['password_hash']:
+                return None, 'E-mail ja cadastrado. Faca login.'
+            # Usuario criado via OTP sem senha — definir senha agora
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE email = ?",
+                (hashed, email),
+            )
+            row = conn.execute(
+                "SELECT id, email, created_at FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+            log.info(f'[AUTH] Senha definida para usuario existente: {email}')
+            return dict(row), None
+
+        conn.execute(
+            "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+            (email, hashed, now),
+        )
+        row = conn.execute(
+            "SELECT id, email, created_at FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+        log.info(f'[AUTH] Novo usuario registrado: {email}')
+        return dict(row), None
+
+
+def login_user(email, password):
+    """
+    Autentica usuario com e-mail + senha.
+    Retorna (user_dict, None) se sucesso, (None, erro) se falha.
+    Usa constant-time comparison (check_password_hash) para evitar timing attacks.
+    """
+    email = email.strip().lower()
+    if not email or not password:
+        return None, 'E-mail e senha sao obrigatorios.'
+
+    with _db_conn() as conn:
+        row = conn.execute(
+            "SELECT id, email, password_hash, created_at FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+
+    if not row:
+        # Gastar tempo com hash para evitar timing attack (user enumeration)
+        check_password_hash(
+            'scrypt:32768:8:1$dummy$0000000000000000000000000000000000000000000000000000000000000000',
+            password,
+        )
+        return None, 'E-mail ou senha incorretos.'
+
+    if not row['password_hash']:
+        return None, 'Conta sem senha. Use o codigo por e-mail ou cadastre uma senha.'
+
+    if not check_password_hash(row['password_hash'], password):
+        return None, 'E-mail ou senha incorretos.'
+
+    user = {'id': row['id'], 'email': row['email'], 'created_at': row['created_at']}
+    log.info(f'[AUTH] Login com senha: {email}')
+    return user, None
 
 
 # ============================================================================

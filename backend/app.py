@@ -24,6 +24,7 @@ from backend.translator import (
 from backend.auth import (
     init_db, get_or_create_user, list_all_users, get_system_stats, get_user_by_id,
     generate_otp, verify_otp, send_otp_email,
+    register_user, login_user,
     clear_untranslated_cache,
 )
 from backend.admin_auth import (
@@ -170,6 +171,42 @@ def _check_rate_limit(ip):
 # ============================================================================
 # Rotas de autenticacao
 # ============================================================================
+
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    """Cadastro com e-mail + senha."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+
+    user, error = register_user(email, password)
+    if error:
+        return jsonify({'error': error}), 400
+
+    user['is_admin'] = is_admin(email)
+    session['user_email'] = email
+    session.permanent = True
+    log.info(f'[AUTH] Registro: {email}')
+    return jsonify({'user': user}), 201
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    """Login com e-mail + senha."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+
+    user, error = login_user(email, password)
+    if error:
+        return jsonify({'error': error}), 401
+
+    user['is_admin'] = is_admin(email)
+    session['user_email'] = email
+    session.permanent = True
+    log.info(f'[AUTH] Login senha: {email}')
+    return jsonify({'user': user}), 200
+
 
 @app.route('/api/auth/request-otp', methods=['POST'])
 def auth_request_otp():

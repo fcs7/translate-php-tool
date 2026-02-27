@@ -2,6 +2,30 @@ const API_BASE = '/api'
 
 // ─── Autenticacao ─────────────────────────────────────────────────────────────
 
+export async function register(email, password) {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, password }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar')
+  return data
+}
+
+export async function login(email, password) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, password }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'E-mail ou senha incorretos')
+  return data
+}
+
 export async function requestOtp(email) {
   const res = await fetch(`${API_BASE}/auth/request-otp`, {
     method: 'POST',

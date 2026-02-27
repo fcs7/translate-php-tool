@@ -1,24 +1,30 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { requestOtp, verifyOtp } from '../services/api'
+import { login, register, requestOtp, verifyOtp } from '../services/api'
 
 export default function LoginPage({ onSuccess }) {
-  const [step, setStep] = useState('email')   // 'email' | 'otp'
+  // 'login' | 'register' | 'otp-request' | 'otp-verify'
+  const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
-  const [digits, setDigits] = useState(['', '', '', '', '', ''])
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [resendCountdown, setResendCountdown] = useState(0)
 
-  const emailRef = useRef(null)
+  // OTP state
+  const [digits, setDigits] = useState(['', '', '', '', '', ''])
+  const [resendCountdown, setResendCountdown] = useState(0)
   const digitRefs = useRef([])
   const countdownRef = useRef(null)
+  const emailRef = useRef(null)
+  const passwordRef = useRef(null)
 
-  // Foca o input de e-mail ao montar
   useEffect(() => {
     emailRef.current?.focus()
   }, [])
 
-  // Timer de reenvio
+  useEffect(() => () => clearInterval(countdownRef.current), [])
+
+  // Timer de reenvio OTP
   const startCountdown = useCallback((seconds = 60) => {
     setResendCountdown(seconds)
     clearInterval(countdownRef.current)
@@ -33,13 +39,63 @@ export default function LoginPage({ onSuccess }) {
     }, 1000)
   }, [])
 
-  useEffect(() => () => clearInterval(countdownRef.current), [])
-
-  // ─── Passo 1: Enviar OTP ──────────────────────────────────────────────────
-
   function isValidEmail(v) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
   }
+
+  // ─── Login com senha ────────────────────────────────────────────────────────
+
+  async function handleLogin(e) {
+    e.preventDefault()
+    setError('')
+
+    if (!isValidEmail(email)) {
+      setError('Digite um e-mail valido.')
+      return
+    }
+    if (!password) {
+      setError('Digite sua senha.')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const data = await login(email, password)
+      onSuccess(data.user)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ─── Cadastro ───────────────────────────────────────────────────────────────
+
+  async function handleRegister(e) {
+    e.preventDefault()
+    setError('')
+
+    if (!isValidEmail(email)) {
+      setError('Digite um e-mail valido.')
+      return
+    }
+    if (password.length < 6) {
+      setError('Senha deve ter pelo menos 6 caracteres.')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const data = await register(email, password)
+      onSuccess(data.user)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ─── OTP ────────────────────────────────────────────────────────────────────
 
   async function handleRequestOtp(e) {
     e.preventDefault()
@@ -53,7 +109,7 @@ export default function LoginPage({ onSuccess }) {
     setLoading(true)
     try {
       await requestOtp(email)
-      setStep('otp')
+      setMode('otp-verify')
       startCountdown(60)
       setTimeout(() => digitRefs.current[0]?.focus(), 50)
     } catch (err) {
@@ -63,15 +119,12 @@ export default function LoginPage({ onSuccess }) {
     }
   }
 
-  // ─── Passo 2: Inputs OTP ─────────────────────────────────────────────────
-
   function handleDigitChange(index, value) {
     const digit = value.replace(/\D/g, '').slice(-1)
     const next = [...digits]
     next[index] = digit
     setDigits(next)
     setError('')
-
     if (digit && index < 5) {
       digitRefs.current[index + 1]?.focus()
     }
@@ -104,18 +157,14 @@ export default function LoginPage({ onSuccess }) {
     digitRefs.current[focusIdx]?.focus()
   }
 
-  // ─── Passo 2: Verificar OTP ───────────────────────────────────────────────
-
   async function handleVerifyOtp(e) {
     e.preventDefault()
     setError('')
-
     const code = digits.join('')
     if (code.length < 6) {
       setError('Digite todos os 6 digitos.')
       return
     }
-
     setLoading(true)
     try {
       const data = await verifyOtp(email, code)
@@ -145,7 +194,102 @@ export default function LoginPage({ onSuccess }) {
     }
   }
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  function switchMode(newMode) {
+    setMode(newMode)
+    setError('')
+    setPassword('')
+    setDigits(['', '', '', '', '', ''])
+  }
+
+  // ─── Componentes reutilizaveis ──────────────────────────────────────────────
+
+  const ErrorBox = () => error && (
+    <div className="glass-light border border-red-500/20 rounded-lg px-3 py-2 flex items-center gap-2">
+      <svg className="w-4 h-4 text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      <p className="text-red-400 text-sm">{error}</p>
+    </div>
+  )
+
+  const Spinner = () => (
+    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  )
+
+  const EmailInput = () => (
+    <div className="space-y-2">
+      <label className="text-sm text-gray-400 flex items-center gap-2">
+        <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+          <polyline points="22,6 12,13 2,6" />
+        </svg>
+        E-mail
+      </label>
+      <input
+        ref={emailRef}
+        type="email"
+        value={email}
+        onChange={e => { setEmail(e.target.value); setError('') }}
+        placeholder="Digite seu e-mail"
+        autoComplete="email"
+        className="input-glow w-full bg-surface-800/60 border border-white/10 rounded-lg px-4 py-2.5
+                   text-white placeholder-gray-600 text-sm outline-none
+                   focus:border-accent-500 focus:ring-1 focus:ring-accent-500/30
+                   transition-all"
+      />
+    </div>
+  )
+
+  const PasswordInput = ({ autoFocus = false }) => (
+    <div className="space-y-2">
+      <label className="text-sm text-gray-400 flex items-center gap-2">
+        <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+        Senha
+      </label>
+      <div className="relative">
+        <input
+          ref={autoFocus ? passwordRef : undefined}
+          type={showPassword ? 'text' : 'password'}
+          value={password}
+          onChange={e => { setPassword(e.target.value); setError('') }}
+          placeholder={mode === 'register' ? 'Minimo 6 caracteres' : 'Digite sua senha'}
+          autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+          className="input-glow w-full bg-surface-800/60 border border-white/10 rounded-lg px-4 py-2.5 pr-10
+                     text-white placeholder-gray-600 text-sm outline-none
+                     focus:border-accent-500 focus:ring-1 focus:ring-accent-500/30
+                     transition-all"
+        />
+        <button
+          type="button"
+          onClick={() => setShowPassword(!showPassword)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+          tabIndex={-1}
+        >
+          {showPassword ? (
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+              <line x1="1" y1="1" x2="23" y2="23" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          )}
+        </button>
+      </div>
+    </div>
+  )
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-surface-950 flex flex-col items-center justify-center px-4 relative overflow-hidden">
@@ -173,46 +317,141 @@ export default function LoginPage({ onSuccess }) {
       {/* Card */}
       <div className="w-full max-w-sm glass rounded-2xl shadow-2xl overflow-hidden fade-in relative z-10">
 
-        {step === 'email' ? (
-
-          /* ── Passo 1: E-mail ─────────────────────────────────────── */
-          <form onSubmit={handleRequestOtp} className="p-8 space-y-6">
+        {/* ── Login com Senha ─────────────────────────────────────── */}
+        {mode === 'login' && (
+          <form onSubmit={handleLogin} className="p-8 space-y-5">
             <div>
-              <h1 className="text-xl font-semibold text-gradient">Entrar ou cadastrar-se</h1>
+              <h1 className="text-xl font-semibold text-gradient">Entrar</h1>
+              <p className="text-sm text-gray-500 mt-1">Acesse sua conta</p>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm text-gray-400 flex items-center gap-2">
-                <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                  <polyline points="22,6 12,13 2,6" />
-                </svg>
-                E-mail
-              </label>
-              <input
-                ref={emailRef}
-                type="email"
-                value={email}
-                onChange={e => { setEmail(e.target.value); setError('') }}
-                placeholder="Digite seu e-mail"
-                autoComplete="email"
-                className="input-glow w-full bg-surface-800/60 border border-white/10 rounded-lg px-4 py-2.5
-                           text-white placeholder-gray-600 text-sm outline-none
-                           focus:border-accent-500 focus:ring-1 focus:ring-accent-500/30
-                           transition-all"
-              />
-            </div>
+            <EmailInput />
+            <PasswordInput />
+            <ErrorBox />
 
-            {error && (
-              <div className="glass-light border border-red-500/20 rounded-lg px-3 py-2 flex items-center gap-2">
-                <svg className="w-4 h-4 text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <p className="text-red-400 text-sm">{error}</p>
+            <button
+              type="submit"
+              disabled={loading || !email || !password}
+              className="btn-glow w-full py-2.5 rounded-lg font-medium text-sm transition-all
+                         text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2"><Spinner /> Entrando...</span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  Entrar
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                    <polyline points="12 5 19 12 12 19" />
+                  </svg>
+                </span>
+              )}
+            </button>
+
+            <div className="space-y-2 pt-1">
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => switchMode('register')}
+                  className="text-sm text-gray-500 hover:text-accent-400 transition-colors"
+                >
+                  Nao tem conta? <span className="text-accent-400 font-medium">Cadastre-se</span>
+                </button>
               </div>
-            )}
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => switchMode('otp-request')}
+                  className="text-xs text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1.5 mx-auto"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                    <polyline points="22,6 12,13 2,6" />
+                  </svg>
+                  Entrar com codigo por e-mail
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        {/* ── Cadastro ────────────────────────────────────────────── */}
+        {mode === 'register' && (
+          <form onSubmit={handleRegister} className="p-8 space-y-5">
+            <div>
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="text-gray-500 hover:text-gray-300 text-sm mb-4 flex items-center gap-1.5 transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="19" y1="12" x2="5" y2="12" />
+                  <polyline points="12 19 5 12 12 5" />
+                </svg>
+                Voltar
+              </button>
+              <h1 className="text-xl font-semibold text-gradient">Criar conta</h1>
+              <p className="text-sm text-gray-500 mt-1">Cadastre-se para comecar</p>
+            </div>
+
+            <EmailInput />
+            <PasswordInput />
+            <ErrorBox />
+
+            <button
+              type="submit"
+              disabled={loading || !email || password.length < 6}
+              className="btn-glow w-full py-2.5 rounded-lg font-medium text-sm transition-all
+                         text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2"><Spinner /> Cadastrando...</span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="8.5" cy="7" r="4" />
+                    <line x1="20" y1="8" x2="20" y2="14" />
+                    <line x1="23" y1="11" x2="17" y2="11" />
+                  </svg>
+                  Cadastrar
+                </span>
+              )}
+            </button>
+
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="text-sm text-gray-500 hover:text-accent-400 transition-colors"
+              >
+                Ja tem conta? <span className="text-accent-400 font-medium">Entrar</span>
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ── OTP: Solicitar codigo ───────────────────────────────── */}
+        {mode === 'otp-request' && (
+          <form onSubmit={handleRequestOtp} className="p-8 space-y-5">
+            <div>
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="text-gray-500 hover:text-gray-300 text-sm mb-4 flex items-center gap-1.5 transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="19" y1="12" x2="5" y2="12" />
+                  <polyline points="12 19 5 12 12 5" />
+                </svg>
+                Voltar
+              </button>
+              <h1 className="text-xl font-semibold text-gradient">Entrar com codigo</h1>
+              <p className="text-sm text-gray-500 mt-1">Enviaremos um codigo para seu e-mail</p>
+            </div>
+
+            <EmailInput />
+            <ErrorBox />
 
             <button
               type="submit"
@@ -221,15 +460,10 @@ export default function LoginPage({ onSuccess }) {
                          text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  </svg>
-                  Enviando...
-                </span>
+                <span className="flex items-center justify-center gap-2"><Spinner /> Enviando...</span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
-                  Continuar com e-mail
+                  Enviar codigo
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="5" y1="12" x2="19" y2="12" />
                     <polyline points="12 5 19 12 12 19" />
@@ -238,17 +472,16 @@ export default function LoginPage({ onSuccess }) {
               )}
             </button>
           </form>
+        )}
 
-        ) : (
-
-          /* ── Passo 2: OTP ────────────────────────────────────────── */
+        {/* ── OTP: Verificar codigo ───────────────────────────────── */}
+        {mode === 'otp-verify' && (
           <form onSubmit={handleVerifyOtp} className="p-8 space-y-6">
             <div>
               <button
                 type="button"
-                onClick={() => { setStep('email'); setError(''); setDigits(['','','','','','']) }}
-                className="text-gray-500 hover:text-gray-300 text-sm mb-4 flex items-center gap-1.5
-                           transition-colors"
+                onClick={() => { switchMode('otp-request'); setDigits(['','','','','','']) }}
+                className="text-gray-500 hover:text-gray-300 text-sm mb-4 flex items-center gap-1.5 transition-colors"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="19" y1="12" x2="5" y2="12" />
@@ -295,16 +528,7 @@ export default function LoginPage({ onSuccess }) {
               ))}
             </div>
 
-            {error && (
-              <div className="glass-light border border-red-500/20 rounded-lg px-3 py-2 flex items-center justify-center gap-2">
-                <svg className="w-4 h-4 text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
+            <ErrorBox />
 
             <button
               type="submit"
@@ -313,12 +537,7 @@ export default function LoginPage({ onSuccess }) {
                          text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  </svg>
-                  Verificando...
-                </span>
+                <span className="flex items-center justify-center gap-2"><Spinner /> Verificando...</span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -349,8 +568,8 @@ export default function LoginPage({ onSuccess }) {
               </button>
             </div>
           </form>
-
         )}
+
       </div>
 
     </div>
