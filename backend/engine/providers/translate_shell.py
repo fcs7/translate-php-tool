@@ -33,7 +33,7 @@ class TranslateShellProvider(TranslationProvider):
         try:
             result = subprocess.run(
                 ['trans', '-b', f'{self.source_lang}:{self.target_lang}', text],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=8,
             )
             translated = result.stdout.strip()
 

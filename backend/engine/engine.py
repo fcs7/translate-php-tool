@@ -70,7 +70,6 @@ class TranslationEngine:
             log.debug(
                 f'[ENGINE] {provider.name} falhou, tentando proximo provider'
             )
-            time.sleep(0.5)
 
         # 3. Nenhum provider conseguiu
         log.warning(f'[ENGINE] TODOS providers falharam para: {text[:60]}...')
