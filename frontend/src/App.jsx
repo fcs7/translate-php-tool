@@ -5,7 +5,7 @@ import TranslationProgress from './components/TranslationProgress'
 import LoginPage from './pages/LoginPage'
 import { useSocket } from './hooks/useSocket'
 import { useAuth } from './hooks/useAuth'
-import { uploadZip, cancelJob, deleteJob, getJobs, getJobStatus, clearUntranslatedCache } from './services/api'
+import { uploadZip, uploadFiles, cancelJob, deleteJob, getJobs, getJobStatus, clearUntranslatedCache } from './services/api'
 
 export default function App() {
   const { user, loading, isAuthenticated, logout, refetch } = useAuth()
@@ -66,8 +66,11 @@ export default function App() {
 
   // ─── Handlers ────────────────────────────────────────────────────────────
 
-  const handleUpload = useCallback(async (file, delay) => {
-    const { job_id } = await uploadZip(file, delay)
+  const handleUpload = useCallback(async (fileOrFiles, delay) => {
+    const isMultiple = Array.isArray(fileOrFiles)
+    const { job_id } = isMultiple
+      ? await uploadFiles(fileOrFiles, delay)
+      : await uploadZip(fileOrFiles, delay)
     setCurrentJobId(job_id)
     joinJob(job_id)
   }, [joinJob])
@@ -159,7 +162,7 @@ export default function App() {
               </h2>
               <p className="text-sm text-gray-400 mt-1">
                 {showUpload
-                  ? 'Envie um ZIP com seus arquivos PHP para traduzir'
+                  ? 'Envie seus arquivos PHP para traduzir'
                   : 'Acompanhe a traducao em tempo real'
                 }
               </p>

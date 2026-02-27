@@ -60,6 +60,31 @@ export async function uploadZip(file, delay = 0.2) {
   return res.json()
 }
 
+export async function uploadFiles(files, delay = 0.2) {
+  const formData = new FormData()
+  formData.append('delay', delay.toString())
+
+  for (const f of files) {
+    formData.append('files', f)
+    // Preservar caminho relativo (pasta) quando disponivel
+    const relPath = f.webkitRelativePath || f.name
+    formData.append('paths', relPath)
+  }
+
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const data = await res.json()
+    throw new Error(data.error || 'Erro ao enviar arquivos')
+  }
+
+  return res.json()
+}
+
 export async function getJobStatus(jobId) {
   const res = await fetch(`${API_BASE}/jobs/${jobId}`, { credentials: 'include' })
   if (!res.ok) throw new Error('Job nao encontrado')

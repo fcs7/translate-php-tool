@@ -406,7 +406,7 @@ def _run(job, socketio):
 # ============================================================================
 
 def start_translation(archive_path, delay, socketio, user_email=''):
-    """Inicia novo job. Retorna job_id."""
+    """Inicia novo job a partir de arquivo compactado. Retorna job_id."""
     job_id = str(uuid.uuid4())[:8]
     job_dir = os.path.join(JOBS_FOLDER, job_id)
     input_dir = os.path.join(job_dir, 'input')
@@ -419,6 +419,38 @@ def start_translation(archive_path, delay, socketio, user_email=''):
     php_dir = _extract_archive(archive_path, input_dir)
 
     job = TranslationJob(job_id, php_dir, output_dir, delay, user_email)
+    _put(job)
+
+    threading.Thread(target=_run, args=(job, socketio), daemon=True).start()
+    log.info(f'[{job_id}] Thread de traducao iniciada')
+    return job_id
+
+
+def start_translation_raw(php_dir, delay, socketio, user_email=''):
+    """Inicia novo job a partir de arquivos PHP avulsos (sem extracao). Retorna job_id."""
+    job_id = str(uuid.uuid4())[:8]
+    job_dir = os.path.join(JOBS_FOLDER, job_id)
+    input_dir = os.path.join(job_dir, 'input')
+    output_dir = os.path.join(job_dir, 'output')
+
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Mover arquivos PHP para o diretorio do job
+    for dirpath, dirnames, filenames in os.walk(php_dir):
+        for fname in filenames:
+            src = os.path.join(dirpath, fname)
+            rel = os.path.relpath(src, php_dir)
+            dst = os.path.join(input_dir, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+
+    # Limpar diretorio temporario original
+    shutil.rmtree(php_dir, ignore_errors=True)
+
+    log.info(f'[{job_id}] Arquivos PHP movidos para job (sem extracao)')
+
+    job = TranslationJob(job_id, input_dir, output_dir, delay, user_email)
     _put(job)
 
     threading.Thread(target=_run, args=(job, socketio), daemon=True).start()

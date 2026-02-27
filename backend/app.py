@@ -18,7 +18,7 @@ from backend.config import (
     MAX_CONCURRENT_JOBS, RATE_LIMIT_SECONDS, SECRET_KEY, log,
 )
 from backend.translator import (
-    start_translation, get_job, delete_job, list_jobs,
+    start_translation, start_translation_raw, get_job, delete_job, list_jobs,
     cleanup_old_jobs, count_running_jobs,
 )
 from backend.auth import (
@@ -185,7 +185,7 @@ def health():
 @app.route('/api/upload', methods=['POST'])
 @login_required
 def upload_file():
-    """Recebe arquivo compactado com PHPs e inicia traducao."""
+    """Recebe arquivo compactado ou arquivos PHP avulsos e inicia traducao."""
     ip = request.remote_addr
 
     # Rate limit
@@ -199,6 +199,60 @@ def upload_file():
         log.warning(f'{ip} bloqueado: {running} jobs rodando (max {MAX_CONCURRENT_JOBS})')
         return jsonify({'error': f'Limite de {MAX_CONCURRENT_JOBS} traducoes simultaneas'}), 429
 
+    delay = max(0.05, min(float(request.form.get('delay', 0.2)), 5.0))
+
+    # ── Modo 2: multiplos arquivos PHP avulsos ──────────────────────────────
+    raw_files = request.files.getlist('files')
+    if raw_files:
+        paths = request.form.getlist('paths')
+
+        # Validar: todos devem ser .php
+        for i, f in enumerate(raw_files):
+            if not f.filename or not f.filename.lower().endswith('.php'):
+                log.warning(f'{ip} arquivo PHP rejeitado: {f.filename}')
+                return jsonify({'error': f'Arquivo nao e .php: {f.filename}'}), 400
+
+        # Salvar arquivos em diretorio temporario preservando caminhos relativos
+        tmp_dir = os.path.join(UPLOAD_FOLDER, f"raw_{os.urandom(8).hex()}")
+        total_size = 0
+
+        try:
+            for i, f in enumerate(raw_files):
+                # Usar caminho relativo se fornecido, senao nome do arquivo
+                rel_path = paths[i] if i < len(paths) else f.filename
+                # Sanitizar: remover prefixo de pasta raiz do webkitdirectory
+                # (ex: "minha_pasta/sub/file.php" -> "sub/file.php" ou "file.php")
+                parts = rel_path.replace('\\', '/').split('/')
+                if len(parts) > 1:
+                    # Remover primeiro nivel (nome da pasta selecionada)
+                    rel_path = '/'.join(parts[1:])
+                else:
+                    rel_path = parts[0]
+
+                # Prevenir path traversal
+                safe_path = os.path.normpath(rel_path)
+                if safe_path.startswith('..') or os.path.isabs(safe_path):
+                    return jsonify({'error': f'Caminho invalido: {rel_path}'}), 400
+
+                dest = os.path.join(tmp_dir, safe_path)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                f.save(dest)
+                total_size += os.path.getsize(dest)
+
+            log.info(f'{ip} upload: {len(raw_files)} arquivos PHP ({total_size / 1024:.1f} KB)')
+
+            job_id = start_translation_raw(tmp_dir, delay, socketio, user_email=session['user_email'])
+            log.info(f'{ip} job criado: {job_id} (delay={delay}s, {len(raw_files)} arquivos PHP)')
+            return jsonify({'job_id': job_id}), 201
+
+        except Exception as e:
+            log.error(f'{ip} erro ao criar job (PHP avulsos): {e}')
+            if os.path.exists(tmp_dir):
+                import shutil
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            return jsonify({'error': str(e)}), 500
+
+    # ── Modo 1: arquivo compactado (ZIP, RAR, TAR) ─────────────────────────
     if 'file' not in request.files:
         return jsonify({'error': 'Nenhum arquivo enviado'}), 400
 
@@ -206,7 +260,7 @@ def upload_file():
     allowed = ('.zip', '.rar', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2')
     if not f.filename or not f.filename.lower().endswith(allowed):
         log.warning(f'{ip} arquivo rejeitado: {f.filename}')
-        return jsonify({'error': 'Formatos aceitos: ZIP, RAR, TAR, TAR.GZ'}), 400
+        return jsonify({'error': 'Formatos aceitos: ZIP, RAR, TAR, TAR.GZ ou arquivos .php'}), 400
 
     ext = '.' + f.filename.rsplit('.', 1)[-1]
     filename = f"upload_{os.urandom(8).hex()}{ext}"
@@ -215,8 +269,6 @@ def upload_file():
 
     file_size = os.path.getsize(filepath)
     log.info(f'{ip} upload: {f.filename} ({file_size / 1024:.1f} KB)')
-
-    delay = max(0.05, min(float(request.form.get('delay', 0.2)), 5.0))
 
     try:
         job_id = start_translation(filepath, delay, socketio, user_email=session['user_email'])
