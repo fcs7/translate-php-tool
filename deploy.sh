@@ -294,38 +294,58 @@ nginx -t > /dev/null 2>&1 || fail "Configuracao Nginx invalida"
 systemctl reload nginx
 ok "Nginx configurado"
 
-# ── SSL via Certbot ──────────────────────────────────────────────────────────
+# ── SSL via Certbot (totalmente non-interactive) ─────────────────────────────
 if [ -n "$DOMAIN_VAL" ]; then
     CERT_PATH="/etc/letsencrypt/live/$DOMAIN_VAL/fullchain.pem"
 
+    # Obter email para certbot (usado em ambos os casos)
+    if [ "$SKIP_SMTP" -eq 0 ]; then
+        _certbot_email="$SMTP_USER_VAL"
+    else
+        _certbot_email=$(grep "^SMTP_USER" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "admin@$DOMAIN_VAL")
+    fi
+
     if [ -f "$CERT_PATH" ]; then
         # Certificado ja existe — reaplicar SSL ao Nginx (config foi sobrescrita acima)
-        # e verificar renovacao
         skip "certificado SSL existente — reaplicando ao Nginx"
-        certbot install --nginx -d "$DOMAIN_VAL" --non-interactive 2>/dev/null \
-            || warn "certbot install falhou — tente manualmente: certbot --nginx -d $DOMAIN_VAL"
+        # Tenta 'install' com --cert-name; se falhar, tenta 'certbot --nginx' completo
+        if certbot install --nginx \
+            -d "$DOMAIN_VAL" \
+            --cert-name "$DOMAIN_VAL" \
+            --non-interactive \
+            --redirect \
+            2>&1 | sed 's/^/    /'; then
+            :
+        elif certbot --nginx \
+            -d "$DOMAIN_VAL" \
+            --non-interactive \
+            --agree-tos \
+            --no-eff-email \
+            -m "$_certbot_email" \
+            --redirect \
+            --keep-existing \
+            2>&1 | sed 's/^/    /'; then
+            :
+        else
+            warn "certbot falhou — tente: sudo certbot --nginx -d $DOMAIN_VAL --non-interactive --agree-tos --redirect -m $_certbot_email"
+        fi
         certbot renew --quiet --nginx 2>/dev/null || true
         ok "SSL reaplicado ao Nginx"
     else
         log "  Obtendo certificado SSL para $DOMAIN_VAL..."
 
-        if [ "$SKIP_SMTP" -eq 0 ]; then
-            _certbot_email="$SMTP_USER_VAL"
-        else
-            _certbot_email=$(grep "^SMTP_USER" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "admin@$DOMAIN_VAL")
-        fi
-
         if certbot --nginx \
             -d "$DOMAIN_VAL" \
             --non-interactive \
             --agree-tos \
+            --no-eff-email \
             -m "$_certbot_email" \
             --redirect \
             2>&1 | sed 's/^/    /'; then
             ok "SSL ativado — https://$DOMAIN_VAL"
         else
             warn "Certbot falhou — verifique se DNS $DOMAIN_VAL aponta para este IP"
-            warn "Para tentar depois: certbot --nginx -d $DOMAIN_VAL"
+            warn "Para tentar depois: sudo certbot --nginx -d $DOMAIN_VAL --non-interactive --agree-tos --redirect -m $_certbot_email"
         fi
     fi
 fi

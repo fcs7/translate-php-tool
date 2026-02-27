@@ -294,34 +294,50 @@ def translate_text(text, delay):
     if not text.strip():
         return text
 
-    for attempt in range(3):
+    # Strings muito curtas (1-2 palavras) podem ser iguais em ambos idiomas
+    is_short = len(text.strip().split()) <= 2
+
+    for attempt in range(4):
         try:
             result = subprocess.run(
                 ['trans', '-b', f'{SOURCE_LANG}:{TARGET_LANG}', text],
                 capture_output=True, text=True, timeout=30
             )
             translated = result.stdout.strip()
+            stderr = result.stderr.strip().lower() if result.stderr else ''
+
+            # Detectar rate-limit via stderr (Google retorna erros especificos)
+            if 'too many requests' in stderr or 'rate limit' in stderr or \
+               '429' in stderr or 'quota' in stderr:
+                backoff = 5 * (2 ** attempt)  # 5s, 10s, 20s, 40s
+                print(f"  RATE-LIMIT detectado (attempt {attempt+1}), aguardando {backoff}s...")
+                time.sleep(backoff)
+                continue
+
             if result.returncode == 0 and translated:
-                # Verificar se realmente traduziu (output != input)
+                # Strings curtas: aceitar mesmo se igual ao original
+                if is_short:
+                    return translated
+                # Strings longas: verificar se realmente traduziu
                 if translated.lower() != text.strip().lower():
                     return translated
-                # Se output == input, pode ser rate-limit — tentar novamente
+                # Se output == input em string longa, pode ser rate-limit
         except subprocess.TimeoutExpired:
             pass
 
-        # Backoff progressivo: 2s, 4s, 6s
-        time.sleep(2 * (attempt + 1))
+        # Backoff progressivo: 3s, 6s, 12s, 24s
+        time.sleep(3 * (2 ** attempt))
 
-    print(f"  AVISO: falha na tradução, mantendo original: {text[:60]}")
-    return text
+    print(f"  AVISO: falha na tradução após 4 tentativas, mantendo original: {text[:60]}")
+    return None  # Retorna None para indicar falha (diferencia de traducao bem-sucedida)
 
 
 def get_cached_translation(text, delay, cache):
     """
-    Função safe-words: Verifica cache antes de traduzir.
-    Se o texto já foi traduzido, retorna do cache (rápido).
+    Verifica cache antes de traduzir.
+    Se o texto já foi traduzido, retorna do cache.
     Se não, traduz e salva no cache para próximas vezes.
-    Agora aceita cache como parâmetro para multiprocessing.
+    NÃO cacheia traduções falhadas para permitir retry em próximas ocorrências.
     """
     # Normalizar chave (strip) para melhor matching
     cache_key = text.strip()
@@ -333,7 +349,11 @@ def get_cached_translation(text, delay, cache):
     # Não existe: traduzir pela primeira vez
     translated = translate_text(text, delay)
 
-    # Salvar no cache para próximas vezes
+    if translated is None:
+        # Tradução falhou — retorna original SEM cachear (permite retry futuro)
+        return text
+
+    # Tradução OK — salvar no cache
     cache[cache_key] = translated
 
     return translated
