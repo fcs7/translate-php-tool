@@ -294,9 +294,6 @@ def translate_text(text, delay):
     if not text.strip():
         return text
 
-    # Strings muito curtas (1-2 palavras) podem ser iguais em ambos idiomas
-    is_short = len(text.strip().split()) <= 2
-
     for attempt in range(4):
         try:
             result = subprocess.run(
@@ -315,13 +312,10 @@ def translate_text(text, delay):
                 continue
 
             if result.returncode == 0 and translated:
-                # Strings curtas: aceitar mesmo se igual ao original
-                if is_short:
-                    return translated
-                # Strings longas: verificar se realmente traduziu
+                # Verificar se realmente traduziu (output != input)
                 if translated.lower() != text.strip().lower():
                     return translated
-                # Se output == input em string longa, pode ser rate-limit
+                # Se output == input, pode ser rate-limit silencioso
         except subprocess.TimeoutExpired:
             pass
 
@@ -329,7 +323,7 @@ def translate_text(text, delay):
         time.sleep(3 * (2 ** attempt))
 
     print(f"  AVISO: falha na tradução após 4 tentativas, mantendo original: {text[:60]}")
-    return None  # Retorna None para indicar falha (diferencia de traducao bem-sucedida)
+    return text
 
 
 def get_cached_translation(text, delay, cache):
@@ -337,7 +331,7 @@ def get_cached_translation(text, delay, cache):
     Verifica cache antes de traduzir.
     Se o texto já foi traduzido, retorna do cache.
     Se não, traduz e salva no cache para próximas vezes.
-    NÃO cacheia traduções falhadas para permitir retry em próximas ocorrências.
+    NÃO cacheia traduções idênticas ao original (possível rate-limit).
     """
     # Normalizar chave (strip) para melhor matching
     cache_key = text.strip()
@@ -349,12 +343,9 @@ def get_cached_translation(text, delay, cache):
     # Não existe: traduzir pela primeira vez
     translated = translate_text(text, delay)
 
-    if translated is None:
-        # Tradução falhou — retorna original SEM cachear (permite retry futuro)
-        return text
-
-    # Tradução OK — salvar no cache
-    cache[cache_key] = translated
+    # Salvar no cache apenas se realmente traduziu (output != input)
+    if translated.strip().lower() != text.strip().lower():
+        cache[cache_key] = translated
 
     return translated
 
