@@ -165,7 +165,7 @@ export default function LoginPage({ onSuccess }) {
           </svg>
         </div>
         <div>
-          <p className="text-gradient text-2xl font-bold leading-none">Trans-Script</p>
+          <p className="text-gradient text-2xl font-bold leading-none">Traducao</p>
           <p className="text-gray-500 text-sm mt-1">Tradutor PHP · EN → PT-BR</p>
         </div>
       </div>

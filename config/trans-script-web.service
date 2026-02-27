@@ -1,8 +1,8 @@
 # /etc/systemd/system/trans-script-web.service
-# Servico systemd para Trans-Script Web
+# Servico systemd para Traducao
 
 [Unit]
-Description=Trans-Script Web — Tradutor PHP EN→PT-BR
+Description=Traducao — Tradutor PHP EN→PT-BR
 After=network.target
 
 [Service]

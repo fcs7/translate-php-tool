@@ -363,7 +363,7 @@ def serve_index():
         return send_from_directory(STATIC_FOLDER, 'index.html')
     return (
         '<html><body style="font-family:sans-serif;padding:40px;text-align:center">'
-        '<h1>Trans-Script Web</h1>'
+        '<h1>Traducao</h1>'
         '<p>Frontend nao compilado. Execute: <code>cd frontend &amp;&amp; npm run build</code></p>'
         '</body></html>'
     )

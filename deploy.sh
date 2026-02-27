@@ -40,7 +40,7 @@ fi
 
 echo ""
 echo "=================================================="
-echo "  Trans-Script Web — Deploy Automatico"
+echo "  Traducao — Deploy Automatico"
 echo "  Origem:  $SCRIPT_DIR"
 echo "  Destino: $INSTALL_DIR"
 echo "=================================================="
@@ -142,8 +142,8 @@ if [ "$SKIP_SMTP" -eq 0 ]; then
         warn "Senha nao pode ser vazia."
     done
 
-    read -r -p "  Nome do remetente [Trans-Script]: " _from_name
-    _from_name="${_from_name:-Trans-Script}"
+    read -r -p "  Nome do remetente [Traducao]: " _from_name
+    _from_name="${_from_name:-Traducao}"
     SMTP_FROM_VAL="$_from_name <$SMTP_USER_VAL>"
 
     read -r -p "  Servidor SMTP [$SMTP_HOST_VAL]: " _host
@@ -383,7 +383,7 @@ fi
 
 cat > "/etc/systemd/system/$APP_NAME.service" << UNIT
 [Unit]
-Description=Trans-Script Web — Tradutor PHP EN→PT-BR
+Description=Traducao — Tradutor PHP EN→PT-BR
 After=network.target
 
 [Service]

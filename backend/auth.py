@@ -237,7 +237,7 @@ def send_otp_email(email, code):
                 <div style="width:36px;height:36px;background:#2563eb;border-radius:8px;
                             text-align:center;line-height:36px;font-size:18px;
                             font-weight:bold;color:#fff">T</div>
-                <span style="font-size:18px;font-weight:600;color:#fff">Trans-Script</span>
+                <span style="font-size:18px;font-weight:600;color:#fff">Traducao</span>
               </div>
             </td>
           </tr>

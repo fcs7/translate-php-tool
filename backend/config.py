@@ -39,7 +39,7 @@ SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
 SMTP_USER = os.environ.get('SMTP_USER', '')
 SMTP_PASS = os.environ.get('SMTP_PASS', '')
-SMTP_FROM = os.environ.get('SMTP_FROM', 'Trans-Script <noreply@example.com>')
+SMTP_FROM = os.environ.get('SMTP_FROM', 'Traducao <noreply@example.com>')
 
 # Garantir que diretorios existem
 for _folder in [UPLOAD_FOLDER, JOBS_FOLDER]:

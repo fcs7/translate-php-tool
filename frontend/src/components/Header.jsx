@@ -11,7 +11,7 @@ export default function Header({ user, onLogout }) {
 
         {/* Title block */}
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-gradient leading-tight tracking-tight">Trans-Script</h1>
+          <h1 className="text-xl font-bold text-gradient leading-tight tracking-tight">Traducao</h1>
           <p className="text-xs text-gray-500 mt-0.5 tracking-wide">Tradutor PHP  ·  EN  →  PT-BR</p>
         </div>
 
