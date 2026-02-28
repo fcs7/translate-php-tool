@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getHistory, getActivity, getDownloadUrl } from '../services/api'
+import { getHistory, getActivity, getDownloadUrl, getVoipnowDownloadUrl } from '../services/api'
 import { timeAgo, expiresIn, ACTION_LABELS } from '../utils/formatters'
 
 export default function UserHistory({ onBack }) {
@@ -98,17 +98,30 @@ export default function UserHistory({ onBack }) {
                 </div>
 
                 {j.status === 'completed' && j.file_available && !expired && (
-                  <a
-                    href={getDownloadUrl(j.job_id)}
-                    className="inline-flex items-center gap-1.5 text-xs text-accent-400 hover:text-accent-300 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    Baixar ZIP
-                  </a>
+                  <div className="flex items-center gap-3">
+                    <a
+                      href={getDownloadUrl(j.job_id)}
+                      className="inline-flex items-center gap-1.5 text-xs text-accent-400 hover:text-accent-300 transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      Baixar ZIP
+                    </a>
+                    <a
+                      href={getVoipnowDownloadUrl(j.job_id)}
+                      className="inline-flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      Baixar VoipNow
+                    </a>
+                  </div>
                 )}
               </div>
             )
