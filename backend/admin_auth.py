@@ -17,6 +17,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from typing import List, Optional
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from contextlib import contextmanager
 from datetime import datetime
@@ -71,7 +72,7 @@ def encrypt_payload(data: dict) -> str:
     return urlsafe_b64encode(nonce + ciphertext).decode('ascii')
 
 
-def decrypt_payload(token: str) -> dict | None:
+def decrypt_payload(token: str) -> Optional[dict]:
     """
     Descriptografa payload AES-256-GCM.
     Retorna dict ou None se falhar (token adulterado/invalido).
@@ -195,7 +196,7 @@ def is_admin(email: str) -> bool:
         return bool(row and row['is_admin'])
 
 
-def list_admins() -> list[dict]:
+def list_admins() -> List[dict]:
     """Lista todos os admins."""
     with _db_conn() as conn:
         rows = conn.execute(
@@ -208,7 +209,7 @@ def list_admins() -> list[dict]:
 # Sessoes admin (server-side, criptografadas)
 # ============================================================================
 
-def create_admin_session(email: str, ip: str) -> str | None:
+def create_admin_session(email: str, ip: str) -> Optional[str]:
     """
     Cria sessao admin segura. Retorna token_composto ou None se nao for admin.
 
@@ -255,7 +256,7 @@ def create_admin_session(email: str, ip: str) -> str | None:
     return f'{token_raw}.{signature}'
 
 
-def validate_admin_session(token_composto: str, ip: str) -> dict | None:
+def validate_admin_session(token_composto: str, ip: str) -> Optional[dict]:
     """
     Valida token de sessao admin.
     Retorna dict com dados da sessao ou None se invalido.
@@ -381,7 +382,7 @@ def cleanup_expired_sessions():
     return deleted
 
 
-def list_active_sessions(email: str = None) -> list[dict]:
+def list_active_sessions(email: str = None) -> List[dict]:
     """Lista sessoes admin ativas (opcionalmente filtra por email)."""
     with _db_conn() as conn:
         if email:

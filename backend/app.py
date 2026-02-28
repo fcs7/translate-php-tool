@@ -6,6 +6,7 @@ Monolito: serve API REST + WebSocket + frontend React (static).
 
 import os
 import re
+import threading
 import time
 from datetime import timedelta
 from functools import wraps
@@ -124,6 +125,7 @@ _upload_timestamps = {}
 
 # Rate limit para tentativas de admin login: {ip: [timestamp, ...]}
 _admin_login_attempts = {}
+_admin_login_lock = threading.Lock()
 _ADMIN_LOGIN_MAX_ATTEMPTS = 5
 _ADMIN_LOGIN_WINDOW = 300  # 5 minutos
 
@@ -569,19 +571,23 @@ def admin_login():
     """
     ip = request.remote_addr
 
-    # Rate limit de tentativas de admin login por IP
+    # Rate limit de tentativas de admin login por IP (thread-safe)
     now = time.time()
-    attempts = _admin_login_attempts.get(ip, [])
-    attempts = [t for t in attempts if now - t < _ADMIN_LOGIN_WINDOW]
-    if len(attempts) >= _ADMIN_LOGIN_MAX_ATTEMPTS:
-        log.warning(f'[ADMIN] Rate limit atingido para IP {ip}')
-        return jsonify({'error': 'Muitas tentativas. Aguarde 5 minutos.'}), 429
+    with _admin_login_lock:
+        attempts = _admin_login_attempts.get(ip, [])
+        attempts = [t for t in attempts if now - t < _ADMIN_LOGIN_WINDOW]
+        if len(attempts) >= _ADMIN_LOGIN_MAX_ATTEMPTS:
+            log.warning(f'[ADMIN] Rate limit atingido para IP {ip}')
+            return jsonify({'error': 'Muitas tentativas. Aguarde 5 minutos.'}), 429
 
     email = session['user_email']
 
     if not is_admin(email):
-        attempts.append(now)
-        _admin_login_attempts[ip] = attempts
+        with _admin_login_lock:
+            attempts = _admin_login_attempts.get(ip, [])
+            attempts = [t for t in attempts if now - t < _ADMIN_LOGIN_WINDOW]
+            attempts.append(now)
+            _admin_login_attempts[ip] = attempts
         log.warning(f'[ADMIN] Tentativa de login admin negada: {email} ({ip})')
         return jsonify({'error': 'Acesso negado'}), 403
 
@@ -590,7 +596,8 @@ def admin_login():
         return jsonify({'error': 'Erro ao criar sessao admin'}), 500
 
     # Limpar tentativas em caso de sucesso
-    _admin_login_attempts.pop(ip, None)
+    with _admin_login_lock:
+        _admin_login_attempts.pop(ip, None)
 
     return jsonify({
         'token': token,

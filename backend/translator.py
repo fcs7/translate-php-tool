@@ -302,7 +302,7 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
             text = trans_engine.prepare_for_translation(raw_value, qc)
             text, ph_map = trans_engine.protect_placeholders(text)
             entries.append((len(output_lines), text, ph_map, prefix, suffix, qc))
-            output_lines.append(None)  # placeholder, sera preenchido no pass 2
+            output_lines.append(line)  # fallback: linha original preservada se cancel
         else:
             output_lines.append(line)
 
@@ -346,8 +346,7 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
     try:
         with open(dst_path, mode, encoding='utf-8') as out:
             for line in output_lines:
-                if line is not None:
-                    out.write(line)
+                out.write(line)
             out.flush()
     except Exception as e:
         log.error(f'[{job.job_id}] Erro ao escrever {rel}: {e}')
