@@ -28,7 +28,7 @@ from backend.auth import (
     register_user, login_user,
     clear_untranslated_cache,
     log_activity, get_user_activity, get_all_activity,
-    save_job_history, get_user_job_history, get_all_job_history,
+    get_user_job_history, get_all_job_history,
     cleanup_expired_jobs, delete_user_account,
     get_user_quota, check_storage_available,
     get_job_db,
@@ -262,7 +262,7 @@ def auth_request_otp():
     try:
         send_otp_email(email, code)
     except RuntimeError as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Erro ao enviar e-mail. Tente novamente.'}), 500
 
     log.info(f'[AUTH] OTP recuperacao solicitado: {email}')
     return jsonify({'message': 'Se o e-mail estiver cadastrado, voce recebera um codigo.'}), 200
@@ -401,7 +401,7 @@ def upload_file():
             if os.path.exists(tmp_dir):
                 import shutil
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Erro interno ao processar arquivos'}), 500
 
     # ── Modo 1: arquivo compactado (ZIP, RAR, TAR) ─────────────────────────
     if 'file' not in request.files:
@@ -443,7 +443,7 @@ def upload_file():
         log.error(f'{ip} erro ao criar job: {e}')
         if os.path.exists(filepath):
             os.remove(filepath)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Erro interno ao processar arquivo'}), 500
 
 
 @app.route('/api/jobs')
@@ -657,6 +657,11 @@ def admin_toggle_user(user_id):
             return jsonify({'error': 'Impossivel remover o ultimo admin do sistema'}), 400
 
     set_admin(row['email'], new_status)
+
+    # Revogar sessoes ativas ao rebaixar admin (evita acesso pos-democao)
+    if not new_status:
+        revoke_all_admin_sessions(row['email'])
+
     action = 'promovido a admin' if new_status else 'removido de admin'
     return jsonify({'message': f'{row["email"]} {action}', 'is_admin': new_status})
 

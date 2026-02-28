@@ -38,24 +38,6 @@ body {
   background-clip: text;
 }
 
-/* Gradient border using pseudo-element */
-.border-gradient {
-  position: relative;
-  border: none;
-}
-.border-gradient::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(126, 191, 191, 0.3), rgba(191, 159, 63, 0.3));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
 /* Glow button */
 .btn-glow {
   background: linear-gradient(135deg, #5fa8a8, #7EBFBF);

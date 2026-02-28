@@ -620,6 +620,7 @@ def delete_user_account(user_id):
         email = row['email']
         conn.execute("DELETE FROM activity_log WHERE user_email = ?", (email,))
         conn.execute("DELETE FROM job_history WHERE user_email = ?", (email,))
+        conn.execute("DELETE FROM jobs WHERE user_email = ?", (email,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         log.info(f'[AUTH] Conta deletada: {email}')
         return email
