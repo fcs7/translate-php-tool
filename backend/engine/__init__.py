@@ -44,7 +44,14 @@ def get_engine() -> TranslationEngine:
         except Exception as e:
             log.warning(f'[ENGINE] Google Free indisponivel: {e}')
 
-        # 2. MyMemory (primeiro fallback, zero dependencia)
+        # 2. DeepL Free (fallback premium, requer API key gratuita)
+        deepl_key = os.environ.get('DEEPL_API_KEY', '')
+        if deepl_key:
+            from backend.engine.providers.deepl_free import DeepLFreeProvider
+            providers.append(DeepLFreeProvider(api_key=deepl_key))
+            log.info('[ENGINE] Provider deepl_free adicionado')
+
+        # 3. MyMemory (fallback gratis, zero dependencia)
         from backend.engine.providers.mymemory import MyMemoryProvider
         providers.append(MyMemoryProvider(
             source_lang='en',
@@ -52,13 +59,6 @@ def get_engine() -> TranslationEngine:
             email=os.environ.get('MYMEMORY_EMAIL'),
         ))
         log.info('[ENGINE] Provider mymemory adicionado')
-
-        # 3. DeepL Free (segundo fallback, requer API key)
-        deepl_key = os.environ.get('DEEPL_API_KEY', '')
-        if deepl_key:
-            from backend.engine.providers.deepl_free import DeepLFreeProvider
-            providers.append(DeepLFreeProvider(api_key=deepl_key))
-            log.info('[ENGINE] Provider deepl_free adicionado')
 
         # 4. translate-shell legado (ultimo recurso)
         from backend.engine.providers.translate_shell import TranslateShellProvider

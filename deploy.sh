@@ -123,6 +123,18 @@ if [ -f "$ENV_FILE" ]; then
     fi
 fi
 
+# ── DeepL API (opcional) ────────────────────────────────────────────────────
+echo -e "${BLUE}Traducao (opcional)${NC}"
+echo "  DeepL Free API Key — cadastro gratis em: https://www.deepl.com/pro#developer"
+read -r -p "  DeepL API Key (Enter para pular): " DEEPL_KEY_VAL
+DEEPL_KEY_VAL="${DEEPL_KEY_VAL// /}"
+if [ -n "$DEEPL_KEY_VAL" ]; then
+    ok "DeepL API Key configurada"
+else
+    warn "Sem DeepL — traducao usara apenas Google Free + MyMemory"
+fi
+echo ""
+
 if [ "$SKIP_SMTP" -eq 0 ]; then
     echo -e "${BLUE}Configuracao de e-mail (OTP)${NC}"
     echo "  Para Gmail: use uma App Password (myaccount.google.com/apppasswords)"
@@ -373,6 +385,8 @@ SMTP_PORT=$SMTP_PORT_VAL
 SMTP_USER=$SMTP_USER_VAL
 SMTP_PASS=$SMTP_PASS_VAL
 SMTP_FROM=$SMTP_FROM_VAL
+
+DEEPL_API_KEY=$DEEPL_KEY_VAL
 EOF
     chmod 600 "$ENV_FILE"
     chown root:root "$ENV_FILE"

@@ -1,4 +1,11 @@
 export default function Header({ user, onLogout, onHistory, onAdmin }) {
+  const quota = user?.quota
+
+  const quotaColor = !quota ? 'bg-accent-500'
+    : quota.percent > 95 ? 'bg-red-500'
+    : quota.percent > 80 ? 'bg-yellow-500'
+    : 'bg-accent-500'
+
   return (
     <header className="glass border-b border-white/5">
       <div className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-4">
@@ -18,6 +25,20 @@ export default function Header({ user, onLogout, onHistory, onAdmin }) {
         {/* User info & actions */}
         {user && onLogout && (
           <div className="flex items-center gap-2">
+            {/* Quota */}
+            {quota && (
+              <div className="hidden sm:flex items-center gap-2">
+                <div className="w-20 bg-surface-800/60 rounded-full h-1.5 overflow-hidden border border-white/5">
+                  <div
+                    className={`h-full rounded-full transition-all ${quotaColor}`}
+                    style={{ width: `${Math.min(quota.percent, 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {quota.used_mb} / {quota.limit_mb} MB
+                </span>
+              </div>
+            )}
             <span className="hidden sm:inline-flex items-center gap-2 text-xs text-gray-400 bg-surface-800/60 border border-white/5 rounded-full px-3.5 py-1.5">
               <svg className="w-3.5 h-3.5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />

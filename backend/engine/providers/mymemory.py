@@ -48,7 +48,7 @@ class MyMemoryProvider(TranslationProvider):
                 'User-Agent': 'TransScript/1.0',
             })
 
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
 
             status = data.get('responseStatus', 0)

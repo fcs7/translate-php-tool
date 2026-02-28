@@ -3,6 +3,7 @@ Servico de traducao — integra com translate.py do projeto.
 Importa funcoes do script existente e adiciona progresso via WebSocket.
 """
 
+import io
 import os
 import shutil
 import subprocess
@@ -13,12 +14,19 @@ import uuid
 import threading
 from datetime import datetime
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import backend.translate as trans_engine
 
 from backend.config import JOBS_FOLDER, DEFAULT_DELAY, log
 from backend.engine import get_engine
+from backend.auth import save_job_db, get_jobs_db, get_job_db, delete_job_db, update_storage_used
 
-BATCH_SIZE = 50
+BATCH_SIZE = 100
+MAX_PARALLEL_FILES = 4
+
+# Lock para proteger estado compartilhado do job durante traducao paralela
+_progress_lock = threading.Lock()
 
 
 # ============================================================================
@@ -46,6 +54,8 @@ class TranslationJob:
         self.errors = []
         self.validation = None
         self.output_zip = None
+        self.output_tar = None
+        self.file_size_bytes = 0
 
         # Timestamps
         self.created_at = datetime.now().isoformat()
@@ -70,8 +80,10 @@ class TranslationJob:
             'started_at': self.started_at,
             'finished_at': self.finished_at,
             'has_output': self.output_zip is not None,
+            'has_voipnow': self.output_tar is not None,
             'validation': self.validation,
             'user_email': self.user_email,
+            'file_size_bytes': self.file_size_bytes,
         }
 
     def cancel(self):
@@ -173,6 +185,45 @@ def _create_zip(source_dir, zip_path):
     log.info(f'ZIP criado: {file_count} arquivos, {size_kb:.1f} KB')
 
 
+def _create_voipnow_tar(source_dir, tar_path):
+    """Cria tar.gz no formato VoipNow language pack."""
+    meta_content = "ISO: pt_br\nLanguage: Portuguese\nCharset: UTF-8\nVersion: 5.7.0\n"
+    file_count = 0
+
+    with tarfile.open(tar_path, 'w:gz') as tar:
+        # Adicionar meta
+        meta_info = tarfile.TarInfo(name='language/meta')
+        meta_bytes = meta_content.encode('utf-8')
+        meta_info.size = len(meta_bytes)
+        tar.addfile(meta_info, io.BytesIO(meta_bytes))
+
+        # Adicionar PHPs em language/pt_br/
+        for dirpath, _, filenames in os.walk(source_dir):
+            for fname in filenames:
+                full = os.path.join(dirpath, fname)
+                arcname = 'language/pt_br/' + os.path.relpath(full, source_dir)
+                tar.add(full, arcname=arcname)
+                file_count += 1
+
+    size_kb = os.path.getsize(tar_path) / 1024
+    log.info(f'VoipNow TAR criado: {file_count} arquivos, {size_kb:.1f} KB')
+
+
+def _get_dir_size(path):
+    """Retorna tamanho total de um diretorio em bytes."""
+    total = 0
+    try:
+        for dirpath, _, filenames in os.walk(path):
+            for fname in filenames:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, fname))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
 # ============================================================================
 # Contagem de strings
 # ============================================================================
@@ -198,8 +249,8 @@ def _count_strings(file_path):
 
 def _translate_file(src_path, dst_path, delay, job, socketio=None):
     """
-    Traduz um arquivo PHP usando batch translation (2-pass).
-    Pass 1: coleta strings traduziveis. Pass 2: traduz em lotes.
+    Traduz um arquivo PHP usando batch translation (3-pass).
+    Pass 1: coleta strings traduziveis. Pass 2: traduz em lotes. Pass 3: grava arquivo.
     """
     rel = os.path.relpath(src_path, job.input_dir)
 
@@ -208,7 +259,8 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
             src_lines = f.readlines()
     except Exception as e:
         log.error(f'[{job.job_id}] Erro ao ler {rel}: {e}')
-        job.errors.append(f"Erro leitura: {rel}: {e}")
+        with _progress_lock:
+            job.errors.append(f"Erro leitura: {rel}: {e}")
         return 0
 
     total_lines = len(src_lines)
@@ -274,18 +326,21 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
                 translated = trans_engine.re_escape(translated, qc)
                 output_lines[idx] = prefix + translated + suffix + '\n'
                 count += 1
-                job.translated_strings += 1
+                with _progress_lock:
+                    job.translated_strings += 1
 
             # Progresso via WebSocket a cada batch
             if socketio and job.total_strings > 0:
-                job.progress = int((job.translated_strings / job.total_strings) * 100)
+                with _progress_lock:
+                    job.progress = int((job.translated_strings / job.total_strings) * 100)
                 socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
 
             time.sleep(delay)
 
     except Exception as e:
         log.error(f'[{job.job_id}] Erro em {rel} batch: {e}')
-        job.errors.append(f"Erro: {rel}: {e}")
+        with _progress_lock:
+            job.errors.append(f"Erro: {rel}: {e}")
 
     # --- Pass 3: escrever arquivo ---
     try:
@@ -296,7 +351,8 @@ def _translate_file(src_path, dst_path, delay, job, socketio=None):
             out.flush()
     except Exception as e:
         log.error(f'[{job.job_id}] Erro ao escrever {rel}: {e}')
-        job.errors.append(f"Erro escrita: {rel}: {e}")
+        with _progress_lock:
+            job.errors.append(f"Erro escrita: {rel}: {e}")
 
     log.info(f'[{job.job_id}] {rel}: {count} strings traduzidas (batch)')
     return count
@@ -339,14 +395,45 @@ def _run(job, socketio):
             job.errors.append("Nenhum arquivo PHP encontrado no arquivo enviado")
             job.status = 'failed'
             job.finished_at = datetime.now().isoformat()
+            save_job_db(job.to_dict())
             socketio.emit('translation_error', job.to_dict(), room=job.job_id)
             return
 
-        for idx, (src, dst, rel, _) in enumerate(tasks):
-            if job._cancel_flag:
+        # Traducao paralela de arquivos (MAX_PARALLEL_FILES workers)
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FILES) as pool:
+            futures = {}
+            for idx, (src, dst, rel, _) in enumerate(tasks):
+                if job._cancel_flag:
+                    break
+                future = pool.submit(_translate_file, src, dst, job.delay, job, socketio)
+                futures[future] = (idx, rel)
+
+            cancelled = False
+            for future in as_completed(futures):
+                idx, rel = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    log.error(f'[{job.job_id}] Erro thread {rel}: {e}')
+                    with _progress_lock:
+                        job.errors.append(f"Erro thread: {rel}: {e}")
+
+                with _progress_lock:
+                    job.files_done += 1
+                    job.current_file = rel
+                    if job.total_strings > 0:
+                        job.progress = int((job.translated_strings / job.total_strings) * 100)
+                socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
+
+                if job._cancel_flag:
+                    cancelled = True
+                    break
+
+            if cancelled:
                 job.status = 'cancelled'
                 job.finished_at = datetime.now().isoformat()
-                log.info(f'[{job.job_id}] Cancelado pelo usuario ({idx}/{job.total_files} arquivos)')
+                log.info(f'[{job.job_id}] Cancelado pelo usuario ({job.files_done}/{job.total_files} arquivos)')
+                save_job_db(job.to_dict())
                 socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
                 try:
                     from backend.auth import save_job_history
@@ -354,13 +441,6 @@ def _run(job, socketio):
                 except Exception:
                     pass
                 return
-
-            job.current_file = rel
-            job.files_done = idx
-            log.info(f'[{job.job_id}] [{idx + 1}/{job.total_files}] Traduzindo: {rel}')
-            socketio.emit('translation_progress', job.to_dict(), room=job.job_id)
-
-            _translate_file(src, dst, job.delay, job, socketio)
 
         # Finalizar
         job.files_done = job.total_files
@@ -385,8 +465,22 @@ def _run(job, socketio):
         _create_zip(job.output_dir, zip_path)
         job.output_zip = zip_path
 
+        # VoipNow TAR
+        tar_path = os.path.join(JOBS_FOLDER, job.job_id, 'voipnow.tar.gz')
+        log.info(f'[{job.job_id}] Criando VoipNow TAR...')
+        _create_voipnow_tar(job.output_dir, tar_path)
+        job.output_tar = tar_path
+
         job.status = 'completed'
         job.finished_at = datetime.now().isoformat()
+
+        # Calcular tamanho e atualizar quota
+        job.file_size_bytes = _get_dir_size(os.path.join(JOBS_FOLDER, job.job_id))
+        if job.user_email:
+            update_storage_used(job.user_email, job.file_size_bytes)
+
+        # Persistir no DB
+        save_job_db(job.to_dict())
 
         elapsed = (datetime.fromisoformat(job.finished_at) -
                    datetime.fromisoformat(job.started_at)).total_seconds()
@@ -410,6 +504,7 @@ def _run(job, socketio):
         job.finished_at = datetime.now().isoformat()
         job.errors.append(f"Erro fatal: {str(e)}")
         log.error(f'[{job.job_id}] FALHA FATAL: {e}', exc_info=True)
+        save_job_db(job.to_dict())
         socketio.emit('translation_error', job.to_dict(), room=job.job_id)
 
         # Persistir falha no historico
@@ -439,6 +534,9 @@ def start_translation(archive_path, delay, socketio, user_email=''):
 
     job = TranslationJob(job_id, php_dir, output_dir, delay, user_email)
     _put(job)
+
+    # Persistir estado inicial no DB
+    save_job_db(job.to_dict())
 
     threading.Thread(target=_run, args=(job, socketio), daemon=True).start()
     log.info(f'[{job_id}] Thread de traducao iniciada')
@@ -482,21 +580,50 @@ def get_job(job_id):
 
 
 def delete_job(job_id):
+    # Tentar pegar da memória primeiro, senão do DB (para file_size_bytes)
     job = _pop(job_id)
-    if job:
-        job_dir = os.path.join(JOBS_FOLDER, job_id)
+    file_size = job.file_size_bytes if job else 0
+    user_email = job.user_email if job else None
+
+    if not job:
+        db_job = get_job_db(job_id)
+        if db_job:
+            file_size = db_job.get('file_size_bytes', 0)
+            user_email = db_job.get('user_email')
+
+    job_dir = os.path.join(JOBS_FOLDER, job_id)
+    if os.path.exists(job_dir):
         shutil.rmtree(job_dir, ignore_errors=True)
-        log.info(f'[{job_id}] Job removido e arquivos limpos')
-        return True
-    return False
+
+    delete_job_db(job_id)
+
+    # Devolver quota
+    if user_email and file_size > 0:
+        update_storage_used(user_email, -file_size)
+
+    log.info(f'[{job_id}] Job removido e arquivos limpos')
+    return True
 
 
 def list_jobs(user_email=None):
-    with _jobs_lock:
-        jobs = list(_jobs.values())
+    """Combina jobs em memória (prioridade) + DB (historico)."""
+    merged = {}
+
+    # DB primeiro (historico)
     if user_email:
-        jobs = [j for j in jobs if j.user_email == user_email]
-    return [j.to_dict() for j in jobs]
+        for jd in get_jobs_db(user_email):
+            merged[jd['job_id']] = jd
+
+    # Memoria sobrescreve (dados em tempo real)
+    with _jobs_lock:
+        for j in _jobs.values():
+            if user_email and j.user_email != user_email:
+                continue
+            merged[j.job_id] = j.to_dict()
+
+    # Ordenar por created_at descendente
+    result = sorted(merged.values(), key=lambda x: x.get('created_at', ''), reverse=True)
+    return result
 
 
 def cleanup_old_jobs(max_age_hours=24):

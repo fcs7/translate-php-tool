@@ -1,4 +1,4 @@
-import { getDownloadUrl } from '../services/api'
+import { getDownloadUrl, getVoipnowDownloadUrl } from '../services/api'
 
 export default function TranslationProgress({ job, onCancel, onDelete, onNewTranslation }) {
   if (!job) return null
@@ -178,18 +178,32 @@ export default function TranslationProgress({ job, onCancel, onDelete, onNewTran
         )}
 
         {isCompleted && (
-          <a
-            href={getDownloadUrl(job.job_id)}
-            className="btn-success flex-1 py-2.5 rounded-lg text-sm font-medium transition-all
-                       text-center inline-flex items-center justify-center gap-2"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            Baixar ZIP
-          </a>
+          <>
+            <a
+              href={getDownloadUrl(job.job_id)}
+              className="btn-success flex-1 py-2.5 rounded-lg text-sm font-medium transition-all
+                         text-center inline-flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Baixar ZIP
+            </a>
+            <a
+              href={getVoipnowDownloadUrl(job.job_id)}
+              className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-purple-600/80 text-white hover:bg-purple-500 transition-all
+                         text-center inline-flex items-center justify-center gap-2 border border-purple-500/30"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Baixar VoipNow
+            </a>
+          </>
         )}
 
         {isDone && (

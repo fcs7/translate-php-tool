@@ -140,6 +140,10 @@ export function getDownloadUrl(jobId) {
   return `${API_BASE}/jobs/${jobId}/download`
 }
 
+export function getVoipnowDownloadUrl(jobId) {
+  return `${API_BASE}/jobs/${jobId}/download/voipnow`
+}
+
 // ─── Historico do usuario ────────────────────────────────────────────────────
 
 export async function getHistory() {
