@@ -16,6 +16,9 @@ export default function AdminPanel({ onBack }) {
   const [activity, setActivity] = useState([])
   const [jobHistory, setJobHistory] = useState([])
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [actionLoading, setActionLoading] = useState(null)
+  const [actionError, setActionError] = useState('')
 
   // Auth admin
   useEffect(() => {
@@ -25,34 +28,51 @@ export default function AdminPanel({ onBack }) {
       .finally(() => setLoading(false))
   }, [])
 
-  // Load data when token is ready (sequencial para evitar race condition no SQLite)
+  // Cada request independente — falha de um nao afeta os outros
   const loadData = useCallback(async () => {
     if (!token) return
-    try {
-      const s = await adminGetStats(token)
-      const u = await adminGetUsers(token)
-      const a = await adminGetActivity(token)
-      const j = await adminGetJobHistory(token)
-      setStats(s)
-      setUsers(u)
-      setActivity(a)
-      setJobHistory(j)
-    } catch (err) {
-      console.error('[Admin] Erro ao carregar dados:', err.message)
-    }
+    setRefreshing(true)
+
+    try { setStats(await adminGetStats(token)) } catch (e) { console.error('[Admin] stats:', e.message) }
+    try { setUsers(await adminGetUsers(token)) } catch (e) { console.error('[Admin] users:', e.message) }
+    try { setActivity(await adminGetActivity(token)) } catch (e) { console.error('[Admin] activity:', e.message) }
+    try { setJobHistory(await adminGetJobHistory(token)) } catch (e) { console.error('[Admin] jobs:', e.message) }
+
+    setRefreshing(false)
   }, [token])
 
   useEffect(() => { loadData() }, [loadData])
 
+  // Limpa erro de acao apos 5s
+  useEffect(() => {
+    if (!actionError) return
+    const t = setTimeout(() => setActionError(''), 5000)
+    return () => clearTimeout(t)
+  }, [actionError])
+
   async function handleToggleAdmin(userId) {
-    await adminToggleAdmin(token, userId)
-    loadData()
+    setActionLoading(`toggle-${userId}`)
+    try {
+      await adminToggleAdmin(token, userId)
+      await loadData()
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setActionLoading(null)
+    }
   }
 
   async function handleDeleteUser(userId) {
-    await adminDeleteUser(token, userId)
-    setConfirmDelete(null)
-    loadData()
+    setActionLoading(`delete-${userId}`)
+    try {
+      await adminDeleteUser(token, userId)
+      setConfirmDelete(null)
+      await loadData()
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setActionLoading(null)
+    }
   }
 
   if (loading) {
@@ -78,7 +98,7 @@ export default function AdminPanel({ onBack }) {
 
   const tabs = [
     { id: 'stats', label: 'Painel' },
-    { id: 'users', label: `Usuarios (${users.length})` },
+    { id: 'users', label: users.length > 0 ? `Usuarios (${users.length})` : 'Usuarios' },
     { id: 'activity', label: 'Atividade' },
     { id: 'jobs', label: 'Jobs' },
   ]
@@ -99,6 +119,14 @@ export default function AdminPanel({ onBack }) {
         </h2>
       </div>
 
+      {/* Erro temporario de acao */}
+      {actionError && (
+        <div className="glass-light border border-red-500/20 rounded-lg px-4 py-2 text-red-400 text-sm flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError('')} className="text-red-400/60 hover:text-red-400 ml-2">&times;</button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 glass-light rounded-lg p-1">
         {tabs.map(t => (
@@ -115,6 +143,18 @@ export default function AdminPanel({ onBack }) {
       </div>
 
       {/* ── Stats ────────────────────────────────────────── */}
+      {tab === 'stats' && !stats && (
+        <div className="text-center py-8">
+          {refreshing ? (
+            <>
+              <div className="inline-block w-5 h-5 border-2 border-accent-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-gray-500 text-sm mt-3">Carregando dados...</p>
+            </>
+          ) : (
+            <p className="text-gray-500 text-sm">Nenhum dado disponivel.</p>
+          )}
+        </div>
+      )}
       {tab === 'stats' && stats && (
         <div className="grid grid-cols-2 gap-3">
           {[
@@ -154,23 +194,35 @@ export default function AdminPanel({ onBack }) {
                 <div className="flex-1" />
                 <button
                   onClick={() => handleToggleAdmin(u.id)}
-                  className="text-gray-500 hover:text-accent-400 transition-colors px-2 py-1 rounded"
+                  disabled={!!actionLoading}
+                  className="text-gray-500 hover:text-accent-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded flex items-center gap-1"
                 >
+                  {actionLoading === `toggle-${u.id}` && (
+                    <div className="w-3 h-3 border-2 border-accent-400 border-t-transparent rounded-full animate-spin" />
+                  )}
                   {u.is_admin ? 'Remover admin' : 'Tornar admin'}
                 </button>
                 {confirmDelete === u.id ? (
                   <div className="flex items-center gap-1">
-                    <button onClick={() => handleDeleteUser(u.id)} className="text-red-400 hover:text-red-300 px-2 py-1 rounded text-xs font-medium">
+                    <button
+                      onClick={() => handleDeleteUser(u.id)}
+                      disabled={!!actionLoading}
+                      className="text-red-400 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded text-xs font-medium flex items-center gap-1"
+                    >
+                      {actionLoading === `delete-${u.id}` && (
+                        <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                      )}
                       Confirmar
                     </button>
-                    <button onClick={() => setConfirmDelete(null)} className="text-gray-500 hover:text-gray-300 px-2 py-1 rounded">
+                    <button onClick={() => setConfirmDelete(null)} disabled={!!actionLoading} className="text-gray-500 hover:text-gray-300 disabled:opacity-50 px-2 py-1 rounded">
                       Cancelar
                     </button>
                   </div>
                 ) : (
                   <button
                     onClick={() => setConfirmDelete(u.id)}
-                    className="text-gray-600 hover:text-red-400 transition-colors px-2 py-1 rounded"
+                    disabled={!!actionLoading}
+                    className="text-gray-600 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded"
                   >
                     Deletar
                   </button>
@@ -236,13 +288,18 @@ export default function AdminPanel({ onBack }) {
       <div className="flex justify-center">
         <button
           onClick={loadData}
-          className="glass-light text-xs text-gray-500 hover:text-gray-300 px-4 py-2 rounded-lg transition-all flex items-center gap-1.5"
+          disabled={refreshing}
+          className="glass-light text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-all flex items-center gap-1.5"
         >
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="23 4 23 10 17 10" />
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-          </svg>
-          Atualizar
+          {refreshing ? (
+            <div className="w-3.5 h-3.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          )}
+          {refreshing ? 'Atualizando...' : 'Atualizar'}
         </button>
       </div>
     </div>
