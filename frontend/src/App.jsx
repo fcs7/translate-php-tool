@@ -67,6 +67,13 @@ export default function App() {
     return () => clearInterval(intervalId)
   }, [currentJobId, connected, jobData?.status, setJobData])
 
+  // ─── Recarregar quota apos job completar/falhar ─────────────────────────
+  useEffect(() => {
+    if (jobData?.status === 'completed' || jobData?.status === 'failed') {
+      refetch()
+    }
+  }, [jobData?.status, refetch])
+
   // ─── Handlers ────────────────────────────────────────────────────────────
 
   const handleUpload = useCallback(async (fileOrFiles, delay) => {
@@ -89,8 +96,9 @@ export default function App() {
       await deleteJob(currentJobId)
       setCurrentJobId(null)
       setJobData(null)
+      refetch() // Atualizar quota apos devolver storage
     }
-  }, [currentJobId, setJobData])
+  }, [currentJobId, setJobData, refetch])
 
   const handleNewTranslation = useCallback(() => {
     setCurrentJobId(null)
