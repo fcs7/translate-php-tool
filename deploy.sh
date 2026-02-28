@@ -283,10 +283,13 @@ fi
 log "[4/6] Frontend React..."
 
 cd "$INSTALL_DIR/frontend"
-sudo -u "$DEPLOY_USER" npm install --silent 2>/dev/null
-sudo -u "$DEPLOY_USER" npm run build 2>/dev/null
+sudo -u "$DEPLOY_USER" npm install --silent 2>&1 | tail -5 | sed 's/^/  /'
+if sudo -u "$DEPLOY_USER" npm run build 2>&1 | tail -10 | sed 's/^/  /'; then
+    ok "Frontend compilado"
+else
+    fail "Erro ao compilar frontend — veja acima"
+fi
 cd "$INSTALL_DIR"
-ok "Frontend compilado"
 
 # =============================================================================
 # 5. Nginx + SSL
