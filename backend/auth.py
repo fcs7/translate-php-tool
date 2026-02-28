@@ -130,6 +130,12 @@ def init_db():
             except sqlite3.OperationalError:
                 pass  # coluna ja existe
 
+        # Migration: adicionar file_size_bytes na tabela job_history
+        try:
+            conn.execute("ALTER TABLE job_history ADD COLUMN file_size_bytes INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # coluna ja existe
+
     log.info('[AUTH] Banco de dados inicializado')
 
 
@@ -548,14 +554,14 @@ def save_job_history(job_dict):
                     """INSERT OR REPLACE INTO job_history
                     (job_id, user_email, status, total_files, total_strings,
                      translated_strings, created_at, started_at, finished_at,
-                     expires_at, file_available)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                     expires_at, file_available, file_size_bytes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
                     (
                         job_dict['job_id'], job_dict['user_email'], job_dict['status'],
                         job_dict.get('total_files', 0), job_dict.get('total_strings', 0),
                         job_dict.get('translated_strings', 0), job_dict.get('created_at', ''),
                         job_dict.get('started_at'), job_dict.get('finished_at'),
-                        expires,
+                        expires, job_dict.get('file_size_bytes', 0),
                     ),
                 )
     except Exception as e:
@@ -567,7 +573,8 @@ def get_user_job_history(user_email, limit=50):
     with _db_conn() as conn:
         rows = conn.execute(
             "SELECT job_id, status, total_files, total_strings, translated_strings, "
-            "created_at, started_at, finished_at, expires_at, file_available "
+            "created_at, started_at, finished_at, expires_at, file_available, "
+            "COALESCE(file_size_bytes, 0) as file_size_bytes "
             "FROM job_history WHERE user_email = ? ORDER BY created_at DESC LIMIT ?",
             (user_email, limit),
         ).fetchall()
@@ -580,7 +587,7 @@ def get_all_job_history(limit=100):
         rows = conn.execute(
             "SELECT job_id, user_email, status, total_files, total_strings, "
             "translated_strings, created_at, started_at, finished_at, "
-            "expires_at, file_available "
+            "expires_at, file_available, COALESCE(file_size_bytes, 0) as file_size_bytes "
             "FROM job_history ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
