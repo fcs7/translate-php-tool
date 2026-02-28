@@ -244,7 +244,7 @@ export default function LoginPage({ onSuccess }) {
     </div>
   )
 
-  const PasswordInput = ({ autoFocus = false }) => (
+  const PasswordInput = (autoFocus = false) => (
     <div className="space-y-2">
       <label className="text-sm text-gray-400 flex items-center gap-2">
         <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
