@@ -32,6 +32,7 @@ from backend.auth import (
     cleanup_expired_jobs, delete_user_account,
     get_user_quota, check_storage_available,
     get_job_db,
+    get_job_history_entry, get_user_deletable_jobs,
 )
 from backend.admin_auth import (
     init_admin_db, create_admin_session, validate_admin_session,
@@ -465,11 +466,13 @@ def upload_file():
     if not check_storage_available(session['user_email'], file_size):
         os.remove(filepath)
         quota = get_user_quota(session['user_email'])
+        deletable = get_user_deletable_jobs(session['user_email'], limit=5)
         log.warning(f'{ip} quota excedida: {quota["used_mb"]} MB / {quota["limit_mb"]} MB')
         return jsonify({
             'error': f'Cota de armazenamento excedida ({quota["used_mb"]} MB / {quota["limit_mb"]} MB). '
                      'Delete traducoes antigas para liberar espaco.',
             'quota': quota,
+            'deletable_jobs': deletable,
         }), 413
 
 
@@ -816,6 +819,55 @@ def admin_all_job_history():
     return jsonify(get_all_job_history(limit))
 
 
+@app.route('/api/admin/reconcile-storage', methods=['POST'])
+@admin_required
+def admin_reconcile_storage():
+    """Recalcula storage_used_bytes de todos os usuarios a partir do disco."""
+    from backend.auth import update_storage_used, _db_conn, _db_lock
+    from backend.translator import _get_dir_size
+    users = list_all_users()
+    users_fixed = 0
+    total_delta = 0
+
+    for user in users:
+        email = user['email']
+        real_bytes = 0
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT job_id FROM job_history WHERE user_email = ? AND file_available = 1",
+                (email,),
+            ).fetchall()
+        for row in rows:
+            job_dir = os.path.join(JOBS_FOLDER, row['job_id'])
+            if os.path.exists(job_dir):
+                real_bytes += _get_dir_size(job_dir)
+
+        quota = get_user_quota(email)
+        db_bytes = quota['used_bytes']
+        delta = real_bytes - db_bytes
+
+        if abs(delta) > 1024:
+            with _db_lock:
+                with _db_conn() as conn:
+                    conn.execute(
+                        "UPDATE users SET storage_used_bytes = ? WHERE email = ?",
+                        (real_bytes, email),
+                    )
+            log.info(f'[RECONCILE] {email}: DB={db_bytes/(1024*1024):.1f}MB, '
+                     f'disk={real_bytes/(1024*1024):.1f}MB, delta={delta/(1024*1024):.1f}MB')
+            users_fixed += 1
+            total_delta += delta
+
+    log_activity(request.admin_email, 'admin_reconcile',
+                 f'{users_fixed} usuarios corrigidos', request.remote_addr)
+
+    return jsonify({
+        'users_fixed': users_fixed,
+        'total_delta_bytes': total_delta,
+        'total_delta_mb': round(total_delta / (1024 * 1024), 1),
+    })
+
+
 # ============================================================================
 # Historico do usuario (area do cliente)
 # ============================================================================
@@ -833,6 +885,84 @@ def user_activity():
     """Retorna log de atividades do usuario logado."""
     limit = min(int(request.args.get('limit', 50)), 200)
     return jsonify(get_user_activity(session['user_email'], limit))
+
+
+@app.route('/api/quota')
+@login_required
+def user_quota():
+    """Retorna quota de storage do usuario logado."""
+    return jsonify(get_user_quota(session['user_email']))
+
+
+@app.route('/api/history/<job_id>', methods=['DELETE'])
+@login_required
+def delete_history_job(job_id):
+    """Deleta arquivos de um job do historico (preserva metadados)."""
+    if not _validate_job_id(job_id):
+        return jsonify({'error': 'ID invalido'}), 400
+
+    entry = get_job_history_entry(job_id)
+    if not entry:
+        return jsonify({'error': 'Job nao encontrado no historico'}), 404
+    if entry['user_email'] != session['user_email']:
+        return jsonify({'error': 'Acesso negado'}), 403
+    if not entry['file_available']:
+        return jsonify({'error': 'Arquivos ja foram removidos'}), 410
+
+    from backend.translator import expire_job_files
+    freed, _ = expire_job_files(job_id)
+    quota = get_user_quota(session['user_email'])
+
+    log_activity(session['user_email'], 'delete_history',
+                 f'Job {job_id} ({freed / (1024*1024):.1f} MB)', request.remote_addr)
+    log.info(f'{request.remote_addr} deletou historico: {job_id} ({freed / (1024*1024):.1f} MB)')
+
+    return jsonify({
+        'message': 'Arquivos removidos',
+        'freed_bytes': freed,
+        'freed_mb': round(freed / (1024 * 1024), 1),
+        'quota': quota,
+    })
+
+
+@app.route('/api/history', methods=['DELETE'])
+@login_required
+def delete_history_bulk():
+    """Deleta arquivos de todos os jobs do usuario (ou so expirados)."""
+    expired_only = request.args.get('expired_only', '').lower() in ('true', '1', 'yes')
+
+    from backend.translator import expire_job_files
+    jobs = get_user_job_history(session['user_email'], limit=200)
+    total_freed = 0
+    deleted_count = 0
+
+    from datetime import datetime as _dt
+    now = _dt.now().isoformat()
+
+    for j in jobs:
+        if not j['file_available']:
+            continue
+        if expired_only and j['expires_at'] >= now:
+            continue
+        freed, _ = expire_job_files(j['job_id'])
+        total_freed += freed
+        deleted_count += 1
+
+    quota = get_user_quota(session['user_email'])
+
+    log_activity(session['user_email'], 'delete_history_bulk',
+                 f'{deleted_count} jobs ({total_freed / (1024*1024):.1f} MB)',
+                 request.remote_addr)
+    log.info(f'{request.remote_addr} bulk delete: {deleted_count} jobs '
+             f'({total_freed / (1024*1024):.1f} MB)')
+
+    return jsonify({
+        'message': f'{deleted_count} jobs limpos',
+        'deleted_count': deleted_count,
+        'freed_bytes': total_freed,
+        'freed_mb': round(total_freed / (1024 * 1024), 1),
+        'quota': quota,
+    })
 
 
 # ============================================================================
