@@ -124,14 +124,22 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ── DeepL API (opcional) ────────────────────────────────────────────────────
-echo -e "${BLUE}Traducao (opcional)${NC}"
-echo "  DeepL Free API Key — cadastro gratis em: https://www.deepl.com/pro#developer"
-read -r -p "  DeepL API Key (Enter para pular): " DEEPL_KEY_VAL
-DEEPL_KEY_VAL="${DEEPL_KEY_VAL// /}"
-if [ -n "$DEEPL_KEY_VAL" ]; then
-    ok "DeepL API Key configurada"
+SKIP_DEEPL=0
+_existing_deepl=$(grep "^DEEPL_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d= -f2)
+if [ -n "$_existing_deepl" ]; then
+    DEEPL_KEY_VAL="$_existing_deepl"
+    SKIP_DEEPL=1
+    skip "DeepL API Key ja configurada"
 else
-    warn "Sem DeepL — traducao usara apenas Google Free + MyMemory"
+    echo -e "${BLUE}Traducao (opcional)${NC}"
+    echo "  DeepL Free API Key — cadastro gratis em: https://www.deepl.com/pro#developer"
+    read -r -p "  DeepL API Key (Enter para pular): " DEEPL_KEY_VAL
+    DEEPL_KEY_VAL="${DEEPL_KEY_VAL// /}"
+    if [ -n "$DEEPL_KEY_VAL" ]; then
+        ok "DeepL API Key configurada"
+    else
+        warn "Sem DeepL — traducao usara apenas Google Free + MyMemory"
+    fi
 fi
 echo ""
 
