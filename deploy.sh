@@ -125,7 +125,7 @@ fi
 
 # ── DeepL API (opcional) ────────────────────────────────────────────────────
 SKIP_DEEPL=0
-_existing_deepl=$(grep "^DEEPL_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d= -f2)
+_existing_deepl=$(grep "^DEEPL_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)
 if [ -n "$_existing_deepl" ]; then
     DEEPL_KEY_VAL="$_existing_deepl"
     SKIP_DEEPL=1
