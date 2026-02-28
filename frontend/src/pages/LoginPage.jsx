@@ -325,9 +325,9 @@ export default function LoginPage({ onSuccess }) {
               <p className="text-sm text-gray-500 mt-1">Acesse sua conta</p>
             </div>
 
-            <EmailInput />
-            <PasswordInput />
-            <ErrorBox />
+            {EmailInput()}
+            {PasswordInput()}
+            {ErrorBox()}
 
             <button
               type="submit"
@@ -336,7 +336,7 @@ export default function LoginPage({ onSuccess }) {
                          text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2"><Spinner /> Entrando...</span>
+                <span className="flex items-center justify-center gap-2">{Spinner()} Entrando...</span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   Entrar
@@ -386,9 +386,9 @@ export default function LoginPage({ onSuccess }) {
               <p className="text-sm text-gray-500 mt-1">Cadastre-se para comecar</p>
             </div>
 
-            <EmailInput />
-            <PasswordInput />
-            <ErrorBox />
+            {EmailInput()}
+            {PasswordInput()}
+            {ErrorBox()}
 
             <button
               type="submit"
@@ -397,7 +397,7 @@ export default function LoginPage({ onSuccess }) {
                          text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2"><Spinner /> Cadastrando...</span>
+                <span className="flex items-center justify-center gap-2">{Spinner()} Cadastrando...</span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -442,8 +442,8 @@ export default function LoginPage({ onSuccess }) {
               <p className="text-sm text-gray-500 mt-1">Enviaremos um codigo para acessar sua conta</p>
             </div>
 
-            <EmailInput />
-            <ErrorBox />
+            {EmailInput()}
+            {ErrorBox()}
 
             <button
               type="submit"
@@ -452,7 +452,7 @@ export default function LoginPage({ onSuccess }) {
                          text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2"><Spinner /> Enviando...</span>
+                <span className="flex items-center justify-center gap-2">{Spinner()} Enviando...</span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   Enviar codigo
@@ -520,7 +520,7 @@ export default function LoginPage({ onSuccess }) {
               ))}
             </div>
 
-            <ErrorBox />
+            {ErrorBox()}
 
             <button
               type="submit"
@@ -529,7 +529,7 @@ export default function LoginPage({ onSuccess }) {
                          text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2"><Spinner /> Verificando...</span>
+                <span className="flex items-center justify-center gap-2">{Spinner()} Verificando...</span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
