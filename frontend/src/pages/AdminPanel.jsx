@@ -25,20 +25,21 @@ export default function AdminPanel({ onBack }) {
       .finally(() => setLoading(false))
   }, [])
 
-  // Load data when token is ready
-  const loadData = useCallback(() => {
+  // Load data when token is ready (sequencial para evitar race condition no SQLite)
+  const loadData = useCallback(async () => {
     if (!token) return
-    Promise.all([
-      adminGetStats(token),
-      adminGetUsers(token),
-      adminGetActivity(token),
-      adminGetJobHistory(token),
-    ]).then(([s, u, a, j]) => {
+    try {
+      const s = await adminGetStats(token)
+      const u = await adminGetUsers(token)
+      const a = await adminGetActivity(token)
+      const j = await adminGetJobHistory(token)
       setStats(s)
       setUsers(u)
       setActivity(a)
       setJobHistory(j)
-    }).catch(() => {})
+    } catch (err) {
+      console.error('[Admin] Erro ao carregar dados:', err.message)
+    }
   }, [token])
 
   useEffect(() => { loadData() }, [loadData])
