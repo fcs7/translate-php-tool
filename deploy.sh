@@ -274,18 +274,11 @@ fi
 # =============================================================================
 log "[4/6] Frontend React..."
 
-# Rebuild se o codigo-fonte e mais recente que o build
-_src_ts=$(find "$INSTALL_DIR/frontend/src" -newer "$INSTALL_DIR/backend/static/index.html" 2>/dev/null | wc -l || echo 1)
-
-if [ -f "$INSTALL_DIR/backend/static/index.html" ] && [ "$_src_ts" -eq 0 ]; then
-    skip "frontend ja compilado e atualizado"
-else
-    cd "$INSTALL_DIR/frontend"
-    sudo -u "$DEPLOY_USER" npm install --silent 2>/dev/null
-    sudo -u "$DEPLOY_USER" npm run build 2>/dev/null
-    cd "$INSTALL_DIR"
-    ok "Frontend compilado"
-fi
+cd "$INSTALL_DIR/frontend"
+sudo -u "$DEPLOY_USER" npm install --silent 2>/dev/null
+sudo -u "$DEPLOY_USER" npm run build 2>/dev/null
+cd "$INSTALL_DIR"
+ok "Frontend compilado"
 
 # =============================================================================
 # 5. Nginx + SSL
