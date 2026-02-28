@@ -3,22 +3,7 @@ import {
   adminLogin, adminGetUsers, adminGetStats, adminGetActivity,
   adminGetJobHistory, adminToggleAdmin, adminDeleteUser,
 } from '../services/api'
-
-function timeAgo(dateStr) {
-  const d = new Date(dateStr)
-  const now = new Date()
-  const diff = (now - d) / 1000
-  if (diff < 60) return 'agora'
-  if (diff < 3600) return `${Math.floor(diff / 60)}min`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`
-  return `${Math.floor(diff / 86400)}d`
-}
-
-const ACTION_LABELS = {
-  login: 'Login', login_otp: 'Login OTP', register: 'Cadastro', logout: 'Logout',
-  upload: 'Upload', download: 'Download', cancel_job: 'Cancelou', delete_job: 'Deletou',
-  admin_delete_user: 'Deletou usuario',
-}
+import { timeAgo, ACTION_LABELS } from '../utils/formatters'
 
 export default function AdminPanel({ onBack }) {
   const [token, setToken] = useState(null)

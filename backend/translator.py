@@ -456,7 +456,7 @@ def _run(job, socketio):
                      f'{stats["missing_placeholders"]} placeholders perdidos')
         except Exception as e:
             log.error(f'[{job.job_id}] Erro na validacao: {e}')
-            job.validation = {'error': str(e)}
+            job.validation = {'error': 'Falha na validacao da traducao'}
 
         # ZIP de saida
         zip_path = os.path.join(JOBS_FOLDER, job.job_id, 'output.zip')
@@ -495,8 +495,8 @@ def _run(job, socketio):
         try:
             from backend.auth import save_job_history
             save_job_history(job.to_dict())
-        except Exception as he:
-            log.debug(f'[{job.job_id}] Erro ao salvar historico: {he}')
+        except Exception as e:
+            log.debug(f'[{job.job_id}] Erro ao salvar historico: {e}')
 
     except Exception as e:
         job.status = 'failed'
@@ -510,8 +510,8 @@ def _run(job, socketio):
         try:
             from backend.auth import save_job_history
             save_job_history(job.to_dict())
-        except Exception as he:
-            log.debug(f'[{job.job_id}] Erro ao salvar historico: {he}')
+        except Exception as e:
+            log.debug(f'[{job.job_id}] Erro ao salvar historico: {e}')
 
 
 # ============================================================================

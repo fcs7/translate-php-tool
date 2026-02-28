@@ -57,7 +57,7 @@ class DeepLFreeProvider(TranslationProvider):
                 return None
 
             translated = translations[0].get('text', '').strip()
-            if not translated or translated.lower() == text.strip().lower():
+            if not translated or translated.strip().lower() == text.strip().lower():
                 self.record_failure("Traducao identica ao original")
                 return None
 
@@ -65,10 +65,14 @@ class DeepLFreeProvider(TranslationProvider):
             return translated
 
         except Exception as e:
-            error_msg = str(e)
-            is_rate = '429' in error_msg or '456' in error_msg
-            self.record_failure(error_msg, is_rate_limit=is_rate)
+            self._handle_deepl_error(e)
             return None
+
+    def _handle_deepl_error(self, e):
+        """Registra falha com deteccao de rate-limit para codigos 429/456."""
+        error_msg = str(e)
+        is_rate = '429' in error_msg or '456' in error_msg
+        self.record_failure(error_msg, is_rate_limit=is_rate)
 
     def translate_batch(self, texts: List[str]) -> List[Optional[str]]:
         """Batch via DeepL API (multiplos params 'text' em 1 POST request)."""
@@ -119,7 +123,5 @@ class DeepLFreeProvider(TranslationProvider):
             return output
 
         except Exception as e:
-            error_msg = str(e)
-            is_rate = '429' in error_msg or '456' in error_msg
-            self.record_failure(error_msg, is_rate_limit=is_rate)
+            self._handle_deepl_error(e)
             return [None] * len(texts)

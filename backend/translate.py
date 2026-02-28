@@ -81,7 +81,7 @@ def find_lang_dirs(root_path, max_depth=5):
                     if matches > 0:
                         msg_arr_count += matches
                         sample_files.append(php_file)
-            except:
+            except Exception:
                 continue
 
         if msg_arr_count >= 5:  # Mínimo de 5 ocorrências de $msg_arr

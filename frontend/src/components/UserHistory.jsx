@@ -1,37 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getHistory, getActivity, getDownloadUrl } from '../services/api'
-
-function timeAgo(dateStr) {
-  const d = new Date(dateStr)
-  const now = new Date()
-  const diff = (now - d) / 1000
-  if (diff < 60) return 'agora'
-  if (diff < 3600) return `${Math.floor(diff / 60)}min atras`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h atras`
-  return `${Math.floor(diff / 86400)}d atras`
-}
-
-function expiresIn(dateStr) {
-  const d = new Date(dateStr)
-  const now = new Date()
-  const diff = (d - now) / 1000
-  if (diff <= 0) return 'Expirado'
-  const days = Math.floor(diff / 86400)
-  const hours = Math.floor((diff % 86400) / 3600)
-  if (days > 0) return `${days}d ${hours}h`
-  return `${hours}h`
-}
-
-const ACTION_LABELS = {
-  login: 'Login',
-  login_otp: 'Login (codigo)',
-  register: 'Cadastro',
-  logout: 'Logout',
-  upload: 'Upload',
-  download: 'Download',
-  cancel_job: 'Cancelou job',
-  delete_job: 'Deletou job',
-}
+import { timeAgo, expiresIn, ACTION_LABELS } from '../utils/formatters'
 
 export default function UserHistory({ onBack }) {
   const [tab, setTab] = useState('jobs')

@@ -70,9 +70,9 @@ init_db()
 init_admin_db()
 
 # Auto-promover admins listados em ADMIN_EMAILS
-for _admin_email in ADMIN_EMAILS:
-    get_or_create_user(_admin_email)
-    set_admin(_admin_email, True)
+for admin_email in ADMIN_EMAILS:
+    get_or_create_user(admin_email)
+    set_admin(admin_email, True)
 
 try:
     import gevent  # noqa: F401
@@ -168,6 +168,11 @@ def _validate_job_id(job_id):
 def _check_rate_limit(ip):
     """Retorna True se o IP esta dentro do rate limit."""
     now = time.time()
+    # Limpeza periodica: remove entradas com mais de 1h (evita crescimento indefinido)
+    if len(_upload_timestamps) > 1000:
+        stale = [k for k, v in _upload_timestamps.items() if now - v > 3600]
+        for k in stale:
+            del _upload_timestamps[k]
     last = _upload_timestamps.get(ip, 0)
     if now - last < RATE_LIMIT_SECONDS:
         return False

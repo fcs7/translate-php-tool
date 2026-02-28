@@ -26,10 +26,7 @@ export default {
           600: '#4a9090',
         },
         glow: {
-          gold:   '#BF9F3F',
-          copper: '#8C5B3F',
-          cyan:   '#7EBFBF',
-          purple: '#BF9F3F',
+          gold: '#BF9F3F',
         },
       },
       keyframes: {
@@ -66,18 +63,6 @@ export default {
         pulseGlow:      'pulseGlow 2s ease-in-out infinite',
         shimmer:        'shimmer 2s infinite',
         gradientShift:  'gradientShift 15s ease infinite',
-      },
-      backdropBlur: {
-        xs:   '2px',
-        '2xl': '40px',
-        '3xl': '64px',
-      },
-      boxShadow: {
-        'glow-sm':     '0 0 10px rgba(126, 191, 191, 0.3)',
-        'glow':        '0 0 20px rgba(126, 191, 191, 0.3), 0 0 60px rgba(126, 191, 191, 0.1)',
-        'glow-lg':     '0 0 30px rgba(126, 191, 191, 0.5), 0 0 80px rgba(126, 191, 191, 0.2)',
-        'glow-cyan':   '0 0 20px rgba(126, 191, 191, 0.3), 0 0 60px rgba(126, 191, 191, 0.1)',
-        'glow-gold':   '0 0 20px rgba(191, 159, 63, 0.3), 0 0 60px rgba(191, 159, 63, 0.1)',
       },
     },
   },
