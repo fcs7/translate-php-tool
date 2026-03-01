@@ -39,5 +39,8 @@ export const ACTION_LABELS = {
   download: 'Download',
   cancel_job: 'Cancelou job',
   delete_job: 'Deletou job',
+  delete_history: 'Limpou arquivos',
+  delete_history_bulk: 'Limpeza em massa',
   admin_delete_user: 'Deletou usuario',
+  admin_reconcile: 'Reconciliou storage',
 }
