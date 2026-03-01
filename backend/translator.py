@@ -605,15 +605,14 @@ def delete_job(job_id):
 
 
 def expire_job_files(job_id):
-    """Remove arquivos de um job mas preserva historico no DB.
-    Diferente de delete_job() que remove tudo, esta funcao:
+    """Remove arquivos e registro de historico de um job.
     - Remove pasta jobs/{job_id}/ do disco
     - Atualiza storage_used_bytes do usuario (negativo)
-    - Marca file_available=0 no job_history
-    - NAO deleta registros do job_history
+    - Deleta registro do job_history (activity_log ja serve como auditoria)
+    - Remove da tabela jobs ativa
     Retorna (freed_bytes, user_email) ou (0, None) se nao encontrou.
     """
-    from backend.auth import get_job_history_entry, mark_job_files_expired
+    from backend.auth import get_job_history_entry, delete_job_history_entry
 
     # Buscar info do job (memoria > DB jobs > job_history)
     job = _get(job_id)
@@ -647,8 +646,8 @@ def expire_job_files(job_id):
     if freed_bytes == 0:
         freed_bytes = file_size
 
-    # Marcar como expirado no historico
-    mark_job_files_expired(job_id)
+    # Remover registro do historico (activity_log ja serve como auditoria)
+    delete_job_history_entry(job_id)
 
     # Remover da tabela jobs ativa (se existir)
     delete_job_db(job_id)

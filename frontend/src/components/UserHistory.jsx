@@ -52,9 +52,7 @@ export default function UserHistory({ onBack }) {
     try {
       const result = await deleteHistoryJob(jobId)
       setQuota(result.quota)
-      setJobs(prev => prev.map(j =>
-        j.job_id === jobId ? { ...j, file_available: 0 } : j
-      ))
+      setJobs(prev => prev.filter(j => j.job_id !== jobId))
     } catch {
       // silencioso
     } finally {
@@ -75,8 +73,6 @@ export default function UserHistory({ onBack }) {
       setBulkDeleting(false)
     }
   }
-
-  const hasAvailableFiles = jobs.some(j => j.file_available)
 
   if (loading) {
     return (
@@ -108,7 +104,7 @@ export default function UserHistory({ onBack }) {
       <QuotaBar quota={quota} />
 
       {/* Botao liberar espaco */}
-      {quota && quota.percent >= 80 && hasAvailableFiles && (
+      {quota && quota.percent >= 80 && jobs.length > 0 && (
         <div className="relative">
           <button
             onClick={() => setConfirmBulk(!confirmBulk)}
@@ -191,21 +187,17 @@ export default function UserHistory({ onBack }) {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-500">{timeAgo(j.created_at)}</span>
-                    {j.file_available ? (
-                      <button
-                        onClick={() => handleDeleteJob(j.job_id)}
-                        disabled={deleting === j.job_id}
-                        className="text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50"
-                        title="Remover arquivos"
-                      >
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
-                      </button>
-                    ) : (
-                      <span className="text-xs text-gray-600">Removido</span>
-                    )}
+                    <button
+                      onClick={() => handleDeleteJob(j.job_id)}
+                      disabled={deleting === j.job_id}
+                      className="text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50"
+                      title="Remover arquivos"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
 
@@ -213,16 +205,12 @@ export default function UserHistory({ onBack }) {
                   <span>{j.total_files} arquivo{j.total_files !== 1 ? 's' : ''}</span>
                   <span>{j.translated_strings}/{j.total_strings} strings</span>
                   {sizeMb && <span>{sizeMb} MB</span>}
-                  {j.file_available ? (
-                    <span className={expired ? 'text-red-400' : 'text-gray-500'}>
-                      {expired ? 'Expirado' : `Expira em ${expiresIn(j.expires_at)}`}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600">Arquivos removidos</span>
-                  )}
+                  <span className={expired ? 'text-red-400' : 'text-gray-500'}>
+                    {expired ? 'Expirado' : `Expira em ${expiresIn(j.expires_at)}`}
+                  </span>
                 </div>
 
-                {j.status === 'completed' && j.file_available && !expired && (
+                {j.status === 'completed' && !expired && (
                   <div className="flex items-center gap-3">
                     <a
                       href={getDownloadUrl(j.job_id)}
