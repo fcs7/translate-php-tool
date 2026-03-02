@@ -147,7 +147,7 @@ export default function UserHistory({ onBack }) {
             tab === 'jobs' ? 'bg-accent-500/20 text-accent-400 font-medium' : 'text-gray-500 hover:text-gray-300'
           }`}
         >
-          Traducoes ({jobs.length})
+          Traduções ({jobs.length})
         </button>
         <button
           onClick={() => setTab('activity')}
@@ -163,7 +163,7 @@ export default function UserHistory({ onBack }) {
       {tab === 'jobs' && (
         <div className="space-y-2">
           {jobs.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-6">Nenhuma traducao ainda.</p>
+            <p className="text-gray-500 text-sm text-center py-6">Nenhuma tradução ainda.</p>
           ) : jobs.map((j) => {
             const expired = new Date(j.expires_at) < new Date()
             const sizeMb = j.file_size_bytes ? (j.file_size_bytes / (1024 * 1024)).toFixed(1) : null
