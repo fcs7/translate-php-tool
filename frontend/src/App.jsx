@@ -5,7 +5,6 @@ import TranslationProgress from './components/TranslationProgress'
 import UserHistory from './components/UserHistory'
 import LoginPage from './pages/LoginPage'
 import AdminPanel from './pages/AdminPanel'
-import PricingPage from './pages/PricingPage'
 import { useSocket } from './hooks/useSocket'
 import { useAuth } from './hooks/useAuth'
 import { uploadZip, uploadFiles, cancelJob, deleteJob, getJobs, getJobStatus } from './services/api'
@@ -13,7 +12,7 @@ import { uploadZip, uploadFiles, cancelJob, deleteJob, getJobs, getJobStatus } f
 export default function App() {
   const { user, loading, isAuthenticated, logout, refetch } = useAuth()
   const [currentJobId, setCurrentJobId] = useState(null)
-  const [page, setPage] = useState('main') // 'main' | 'history' | 'admin' | 'pricing'
+  const [page, setPage] = useState('main') // 'main' | 'history' | 'admin'
   const { jobData, setJobData, connected, joinJob } = useSocket()
   const hasRestoredRef = useRef(false)
 
@@ -137,7 +136,6 @@ export default function App() {
         onLogout={logout}
         onHistory={() => setPage('history')}
         onAdmin={() => setPage('admin')}
-        onPricing={() => setPage('pricing')}
       />
 
       <main className="flex-1 flex items-start justify-center p-6 relative z-10">
@@ -147,17 +145,6 @@ export default function App() {
           {page === 'history' && (
             <div className="glass rounded-2xl p-6 shadow-2xl slide-up">
               <UserHistory onBack={() => setPage('main')} />
-            </div>
-          )}
-
-          {/* ── Pricing ───────────────────────────────────── */}
-          {page === 'pricing' && (
-            <div className="glass rounded-2xl p-6 shadow-2xl slide-up">
-              <PricingPage
-                onBack={() => setPage('main')}
-                currentPlan={user?.plan}
-                onPlanUpdated={refetch}
-              />
             </div>
           )}
 

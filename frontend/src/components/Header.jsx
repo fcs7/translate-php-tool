@@ -1,6 +1,4 @@
-import PlanBadge from './PlanBadge'
-
-export default function Header({ user, onLogout, onHistory, onAdmin, onPricing }) {
+export default function Header({ user, onLogout, onHistory, onAdmin }) {
   const quota = user?.quota
 
   const quotaColor = !quota ? 'bg-accent-500'
@@ -41,7 +39,6 @@ export default function Header({ user, onLogout, onHistory, onAdmin, onPricing }
                 </span>
               </div>
             )}
-            <PlanBadge plan={user?.plan} onClick={onPricing} />
             <span className="hidden sm:inline-flex items-center gap-2 text-xs text-gray-400 bg-surface-800/60 border border-white/5 rounded-full px-3.5 py-1.5">
               <svg className="w-3.5 h-3.5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
