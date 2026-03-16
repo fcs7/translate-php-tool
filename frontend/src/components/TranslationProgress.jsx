@@ -1,7 +1,23 @@
+import { useState, useRef, useEffect } from 'react'
 import { getDownloadUrl, getVoipnowDownloadUrl } from '../services/api'
 
 export default function TranslationProgress({ job, onCancel, onDelete, onNewTranslation }) {
   if (!job) return null
+
+  const [exportOpen, setExportOpen] = useState(false)
+  const exportRef = useRef(null)
+
+  // Fechar dropdown ao clicar fora
+  useEffect(() => {
+    if (!exportOpen) return
+    const handler = (e) => {
+      if (exportRef.current && !exportRef.current.contains(e.target)) {
+        setExportOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [exportOpen])
 
   const isRunning = job.status === 'running'
   const isCompleted = job.status === 'completed'
@@ -181,28 +197,50 @@ export default function TranslationProgress({ job, onCancel, onDelete, onNewTran
           <>
             <a
               href={getDownloadUrl(job.job_id)}
-              className="btn-success flex-1 py-2.5 rounded-lg text-sm font-medium transition-all
-                         text-center inline-flex items-center justify-center gap-2"
+              className="btn-success py-2.5 px-3 rounded-lg text-sm font-medium transition-all
+                         inline-flex items-center justify-center"
+              title="Download ZIP"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              Baixar ZIP
             </a>
-            <a
-              href={getVoipnowDownloadUrl(job.job_id)}
-              className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-purple-600/80 text-white hover:bg-purple-500 transition-all
-                         text-center inline-flex items-center justify-center gap-2 border border-purple-500/30"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Baixar VoipNow
-            </a>
+            <div className="relative" ref={exportRef}>
+              <button
+                onClick={() => setExportOpen(!exportOpen)}
+                className="py-2.5 px-4 rounded-lg text-sm font-medium bg-purple-600/80 text-white hover:bg-purple-500 transition-all
+                           inline-flex items-center justify-center gap-2 border border-purple-500/30"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                  <polyline points="16 6 12 2 8 6" />
+                  <line x1="12" y1="2" x2="12" y2="15" />
+                </svg>
+                Exportar
+                <svg className={`w-3 h-3 transition-transform ${exportOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {exportOpen && (
+                <div className="absolute bottom-full mb-2 left-0 w-56 glass-light border border-white/10 rounded-lg shadow-xl z-10 overflow-hidden">
+                  <a
+                    href={getVoipnowDownloadUrl(job.job_id)}
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-gray-200 hover:bg-white/10 transition-colors"
+                    onClick={() => setExportOpen(false)}
+                  >
+                    <svg className="w-4 h-4 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <div>
+                      <div className="font-medium">VoipNow</div>
+                      <div className="text-xs text-gray-400">language/pt_br/ (tar.gz)</div>
+                    </div>
+                  </a>
+                </div>
+              )}
+            </div>
           </>
         )}
 
